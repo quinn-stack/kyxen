@@ -1,10 +1,11 @@
-# OpenLogiKey
+# Kyxen
 
 Open-source Logitech G-key macro manager for Linux.
 
-Gives you per-profile macros, native Wayland text injection, automatic profile
-switching based on the focused application, and RGB lighting control — with no
-Windows software, no cloud account, and no proprietary drivers required.
+Gives you per-profile macros on your G-keys — type text, run commands, fire key
+combos, hold modifier keys, click mouse buttons, or repeat any action while the
+key is held. RGB lighting is set per-profile. No Windows software, no cloud
+account, no proprietary drivers required.
 
 ## Supported keyboards
 
@@ -27,8 +28,8 @@ More models coming. PRs welcome — see [Adding keyboard support](#adding-keyboa
 ### From source (recommended for now)
 
 ```bash
-git clone https://github.com/quinn-stack/openlogikey
-cd openlogikey
+git clone https://github.com/quinn-stack/kyxen
+cd kyxen
 pip install -e .
 ```
 
@@ -39,8 +40,8 @@ pip install -e .
 sudo pacman -S python-evdev python-pyside6
 
 # Clone and install
-git clone https://github.com/quinn-stack/openlogikey
-cd openlogikey
+git clone https://github.com/quinn-stack/kyxen
+cd kyxen
 pip install --no-deps -e .
 ```
 
@@ -49,31 +50,46 @@ pip install --no-deps -e .
 ### Start the daemon
 
 ```bash
-openlogikey-daemon
+kyxen-daemon
 # or during development:
-python3 -m openlogikey
+python3 kyxend.py
 ```
 
 ### Open the GUI
 
 ```bash
-openlogikey
-# or:
-python3 -m openlogikey.gui
+kyxen
+# or during development:
+python3 kyxen-gui.py
 ```
 
-The GUI lives in your system tray. Click it to configure profiles and macros.
+The GUI lives in your system tray. Click the tray icon to configure profiles
+and macros.
 
 ### Auto-start with your session
 
 ```bash
-systemctl --user enable --now openlogikey-daemon
+systemctl --user enable --now kyxen
 ```
+
+## Macro types
+
+| Type | Description |
+|------|-------------|
+| **Type text** | Injects a string as keystrokes |
+| **Run command** | Runs a shell command in the background |
+| **Key combo** | Presses a set of keys simultaneously (e.g. Ctrl+Alt+T) |
+| **Hold toggle** | First press holds keys down; second press releases them |
+| **Mouse button** | Click, double-click, or hold-toggle a mouse button |
+
+All types except Hold toggle support **Repeat while held** — the action fires
+repeatedly at a configurable interval (10–5000 ms) for as long as the G-key is
+held down.
 
 ## Permissions
 
-OpenLogiKey needs read/write access to `/dev/input/event*` (G-key interface)
-and `/dev/uinput` (for injecting typed text).
+Kyxen needs read/write access to `/dev/input/event*` (G-key interface) and
+`/dev/uinput` (for injecting keystrokes and mouse events).
 
 On most desktop Linux systems the active session user already has these via
 `logind` ACLs. If not:
@@ -93,43 +109,53 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 
 ## Configuration
 
-Profiles are stored in `~/.config/openlogikey/profiles/` as plain TOML files.
+Profiles are stored in `~/.config/kyxen/profiles/` as plain TOML files.
 You can edit them by hand or use the GUI.
 
 ```toml
-name = "DJ Set"
-display_name = "DJ Set"
-tray_colour = "#FF6600"
-lighting_mode = "static"
-lighting_colour = "#FF6600"
+name = "default"
+display_name = "Default"
+tray_colour = "#00CC44"
 
 [g1]
-action = "type"
-text = "cue point note"
+action = "combo"
+keys = ["ctrl", "alt", "t"]
 
 [g2]
-action = "command"
-cmd = "/home/wade/scripts/bpm-tap.sh"
+action = "mouse_button"
+mouse_btn = "left"
+mouse_mode = "click"
+repeat = true
+repeat_rate = 50
 
 [g3]
+action = "type"
+text = "Hello from G3!"
+
+[g4]
+action = "command"
+cmd = "notify-send 'Kyxen' 'G4 pressed'"
+
+[g5]
 action = "none"
 
-[triggers]
-apps = ["mixxx", "rekordbox"]
+[lighting]
+mode = "static"
+colour = "#00CC44"
 ```
 
 ## Adding keyboard support
 
-1. Create `src/openlogikey/keyboards/logitech_<model>.py`
+1. Create `src/kyxen_keys/keyboards/logitech_<model>.py`
 2. Subclass `LogitechKeyboard`, fill in `PRODUCT_IDS`, `MODEL_NAME`, `GKEY_COUNT`
 3. Implement `gkey_map()` (evdev keycode → 'gN' mapping)
 4. Implement `apply_lighting()` (call into `lighting.py` or add model-specific code)
-5. Register in `src/openlogikey/keyboards/__init__.py` `ALL_DRIVERS`
+5. Register in `src/kyxen_keys/keyboards/__init__.py` `ALL_DRIVERS`
 6. Open a PR
 
-The USB product ID is in `lsusb` output. The G-key evdev codes can be found
-with `sudo evtest`.
+The USB product ID is in `lsusb` output. G-key HID codes can be found with
+`sudo evtest` or by reading the onboard profile sector via `probe_gkeys.py`.
 
 ## Licence
 
-GNU General Public License v2.0 or later — see [LICENSE](LICENSE).
+GNU General Public License v3.0 or later — see [LICENSE](LICENSE).
