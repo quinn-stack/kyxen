@@ -15,8 +15,8 @@ def detect_keyboard() -> LogitechKeyboard | None:
     for driver_cls in ALL_DRIVERS:
         kb = driver_cls.detect()
         if kb is not None:
-            print(f'[openlogikey] detected: {driver_cls.MODEL_NAME}')
-            print(f'[openlogikey] evdev:  {kb.paths.evdev}')
-            print(f'[openlogikey] hidraw: {kb.paths.hidraw or "(not found)"}')
+            print(f'[kyxen] detected: {driver_cls.MODEL_NAME}')
+            print(f'[kyxen] evdev:  {kb.paths.evdev}')
+            print(f'[kyxen] hidraw: {kb.paths.hidraw or "(not found)"}')
             return kb
     return None

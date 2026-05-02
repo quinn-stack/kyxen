@@ -14,7 +14,7 @@ def _real_home() -> Path:
     return Path.home()
 
 
-CONFIG_DIR   = _real_home() / '.config' / 'g815'
+CONFIG_DIR   = _real_home() / '.config' / 'kyxen'
 PROFILES_DIR = CONFIG_DIR / 'profiles'
 
 G_KEYS = ('g1', 'g2', 'g3', 'g4', 'g5')

@@ -3,9 +3,9 @@ requires = ["setuptools>=64"]
 build-backend = "setuptools.backends.legacy:build"
 
 [project]
-name = "openlogikey"
+name = "kyxen-keys"
 version = "0.1.0"
-description = "Open-source Logitech G-key macro manager for Linux"
+description = "Kyxen Keys — open-source Logitech G-key macro manager for Linux"
 readme = "README.md"
 license = { text = "GPL-2.0-or-later" }
 requires-python = ">=3.11"
@@ -25,13 +25,13 @@ dependencies = [
 ]
 
 [project.scripts]
-openlogikey-daemon = "openlogikey.__main__:main"
-openlogikey        = "openlogikey.gui.app:main"
+kyxen-daemon = "kyxen_keys.__main__:main"
+kyxen        = "kyxen_keys.gui.app:main"
 
 [project.urls]
-Homepage   = "https://github.com/quinn-stack/openlogikey"
-Repository = "https://github.com/quinn-stack/openlogikey"
-Issues     = "https://github.com/quinn-stack/openlogikey/issues"
+Homepage   = "https://github.com/quinn-stack/kyxen"
+Repository = "https://github.com/quinn-stack/kyxen"
+Issues     = "https://github.com/quinn-stack/kyxen/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]

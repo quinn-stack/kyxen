@@ -1,4 +1,4 @@
-"""Entry point: python3 -m openlogikey"""
+"""Entry point: python3 -m kyxen_keys"""
 from .daemon import OpenLogiKeyDaemon
 
 def main():

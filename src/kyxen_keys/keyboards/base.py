@@ -7,8 +7,9 @@ from typing import ClassVar
 
 @dataclass
 class DevicePaths:
-    evdev:  str   # /dev/input/eventX  — G-key input interface
-    hidraw: str   # /dev/hidrawX       — HID++ lighting/control interface
+    evdev:        str   # /dev/input/eventX — G-key evdev interface (grabbed for suppression)
+    hidraw:       str   # /dev/hidrawX      — HID++ lighting/control interface
+    hidraw_gkeys: str = ''  # /dev/hidrawY  — G-key boot-protocol interface (may differ from hidraw)
 
 
 class LogitechKeyboard(ABC):
@@ -16,8 +17,7 @@ class LogitechKeyboard(ABC):
     Base driver for a supported Logitech keyboard model.
 
     To add a new keyboard, subclass this, fill in the class variables,
-    implement gkey_map() and apply_lighting(), then register the class
-    in keyboards/__init__.py ALL_DRIVERS.
+    implement apply_lighting(), then register in keyboards/__init__.py ALL_DRIVERS.
     """
 
     VENDOR_ID:   ClassVar[int]       = 0x046D
@@ -25,16 +25,17 @@ class LogitechKeyboard(ABC):
     MODEL_NAME:  ClassVar[str]       = ''
     GKEY_COUNT:  ClassVar[int]       = 0
 
+    # HID++ 2.0 feature index for GKEYS on this model (None = no HID++ G-key support).
+    GKEYS_FEATURE_IDX: ClassVar[int | None] = None
+
+    # Evdev codes emitted by the G-key interface that must be suppressed.
+    # The daemon grabs the interface and drops these so they never reach apps.
+    GKEY_SUPPRESS_CODES: ClassVar[frozenset[int]] = frozenset()
+
     def __init__(self, paths: DevicePaths) -> None:
         self.paths = paths
 
     # ── required overrides ────────────────────────────────────────────────────
-
-    @classmethod
-    @abstractmethod
-    def gkey_map(cls) -> dict[int, str]:
-        """Return mapping of evdev keycode → config key name (e.g. KEY_F1 → 'g1')."""
-        ...
 
     @abstractmethod
     def apply_lighting(self, mode: str, colour: str) -> None:
@@ -58,7 +59,6 @@ class LogitechKeyboard(ABC):
         """
         Return True if this evdev device is the G-key interface (not the main
         keyboard or mouse interface). Override per-model if needed.
-        Default: exclude interfaces whose names end with common suffixes.
         """
         name = device.name
         return not any(name.endswith(s) for s in

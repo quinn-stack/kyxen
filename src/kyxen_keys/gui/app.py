@@ -14,8 +14,8 @@ from PySide6.QtWidgets import (
     QButtonGroup, QGroupBox, QFrame,
 )
 
-from openlogikey import config as cfg
-from openlogikey import daemon
+from kyxen_keys import config as cfg
+from kyxen_keys import daemon
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 

@@ -1,6 +1,7 @@
 """
-OpenLogiKey daemon — detects keyboard, grabs G-key interface,
-executes macros, forwards all other input via uinput passthrough.
+Kyxen daemon — detects keyboard, grabs G-key evdev interface (suppression only),
+reads G-key events via HID++ notifications, executes macros, forwards all
+other input via uinput passthrough.
 """
 from __future__ import annotations
 import json
@@ -15,9 +16,10 @@ from evdev import UInput, ecodes
 
 from . import config as cfg
 from . import macro as macro_runner
+from . import gkeys as gkeys_reader
 from .keyboards import detect_keyboard, LogitechKeyboard
 
-IPC_SOCKET = Path('/tmp/openlogikey.sock')
+IPC_SOCKET = Path('/tmp/kyxen.sock')
 
 
 class OpenLogiKeyDaemon:
@@ -35,8 +37,15 @@ class OpenLogiKeyDaemon:
     def start(self) -> None:
         self._keyboard = detect_keyboard()
         if self._keyboard is None:
-            print('[openlogikey] no supported keyboard found — exiting')
+            print('[kyxen] no supported keyboard found — exiting')
             return
+
+        # Remap must happen before grab: setProfile causes a brief USB state
+        # flush that invalidates any hidraw fd already open on the G-key interface.
+        wrote_remap = self._ensure_gkey_remap()
+        if wrote_remap:
+            print('[kyxen] waiting for keyboard to settle after profile write...')
+            time.sleep(1.5)
 
         self._open_device()
         self._load_profiles()
@@ -46,7 +55,14 @@ class OpenLogiKeyDaemon:
         threading.Thread(target=self._ipc_loop,     daemon=True).start()
         threading.Thread(target=self._config_watch, daemon=True).start()
 
-        print(f'[openlogikey] active profile: {self._active_profile}')
+        gkeys_hidraw = self._keyboard.paths.hidraw_gkeys
+        if gkeys_hidraw:
+            threading.Thread(target=self._gkey_hid_loop, daemon=True).start()
+            print(f'[kyxen] G-key detection: boot-protocol on {gkeys_hidraw}')
+        else:
+            print('[kyxen] WARNING: no G-key hidraw path found')
+
+        print(f'[kyxen] active profile: {self._active_profile}')
 
         try:
             while self._running:
@@ -65,34 +81,52 @@ class OpenLogiKeyDaemon:
             self._uinput.close()
         if IPC_SOCKET.exists():
             IPC_SOCKET.unlink()
-        print('[openlogikey] stopped')
+        print('[kyxen] stopped')
 
     # ── device ────────────────────────────────────────────────────────────────
 
     def _open_device(self) -> None:
         self._device = evdev.InputDevice(self._keyboard.paths.evdev)
         self._device.grab()
-        self._uinput = UInput.from_device(self._device, name='OpenLogiKey Passthrough')
+        self._uinput = UInput.from_device(self._device, name='Kyxen Passthrough')
         macro_runner.set_uinput(self._uinput)
-        print(f'[openlogikey] grabbed {self._device.name}')
+        print(f'[kyxen] grabbed {self._device.name}')
 
-    # ── event loop ────────────────────────────────────────────────────────────
+    def _ensure_gkey_remap(self) -> bool:
+        if not hasattr(self._keyboard, 'ensure_gkey_remap'):
+            return False
+        try:
+            return self._keyboard.ensure_gkey_remap()
+        except Exception as e:
+            print(f'[kyxen] WARNING: G-key flash remap failed: {e}')
+            print('[kyxen] G-keys may conflict with physical F-keys until remap succeeds')
+            return False
+
+    # ── event loop (evdev — suppression + passthrough only) ───────────────────
 
     def _event_loop(self) -> None:
-        gkey_map = self._keyboard.gkey_map()
+        suppress = self._keyboard.GKEY_SUPPRESS_CODES
         try:
             for event in self._device.read_loop():
                 if not self._running:
                     break
-                if event.type == ecodes.EV_KEY and event.code in gkey_map:
-                    if event.value == 1:
-                        self._handle_gkey(gkey_map[event.code])
-                else:
-                    self._uinput.write_event(event)
-                    self._uinput.syn()
+                if event.type == ecodes.EV_KEY and event.code in suppress:
+                    # Drop silently — G-key identity comes from HID boot-protocol thread
+                    continue
+                # Forward as-is; original EV_SYN events drive sync — no extra syn() call
+                self._uinput.write_event(event)
         except Exception as e:
-            print(f'[openlogikey] event loop error: {e}')
+            print(f'[kyxen] event loop error: {e}')
             self._running = False
+
+    # ── HID++ G-key listener ──────────────────────────────────────────────────
+
+    def _gkey_hid_loop(self) -> None:
+        gkeys_reader.run_gkey_listener(
+            hidraw_path=self._keyboard.paths.hidraw_gkeys,
+            on_press=self._handle_gkey,
+            stop_flag=lambda: not self._running,
+        )
 
     def _handle_gkey(self, gkey: str) -> None:
         with self._lock:
@@ -128,12 +162,12 @@ class OpenLogiKeyDaemon:
         if self._keyboard:
             profile = self._profiles[name]
             self._keyboard.apply_lighting(profile.lighting_mode, profile.lighting_colour)
-        print(f'[openlogikey] profile → {name}')
+        print(f'[kyxen] profile → {name}')
         return True
 
     def reload_config(self) -> None:
         self._load_profiles()
-        print('[openlogikey] config reloaded')
+        print('[kyxen] config reloaded')
 
     # ── IPC ───────────────────────────────────────────────────────────────────
 
@@ -218,5 +252,5 @@ def _ipc_send(cmd: dict) -> dict | None:
 
 def daemon_status()           -> dict | None: return _ipc_send({'cmd': 'status'})
 def daemon_running()          -> bool:        return daemon_status() is not None
-def daemon_reload()           -> bool:        r = _ipc_send({'cmd': 'reload'});          return bool(r and r.get('ok'))
+def daemon_reload()           -> bool:        r = _ipc_send({'cmd': 'reload'});              return bool(r and r.get('ok'))
 def daemon_switch_profile(n)  -> bool:        r = _ipc_send({'cmd': 'switch', 'profile': n}); return bool(r and r.get('ok'))
