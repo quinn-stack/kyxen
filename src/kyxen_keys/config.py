@@ -22,12 +22,21 @@ G_KEYS = ('g1', 'g2', 'g3', 'g4', 'g5')
 
 @dataclass
 class MacroAction:
-    action: str = 'none'   # 'none' | 'type' | 'command'
-    text: str   = ''
-    cmd: str    = ''
+    action:      str       = 'none'  # 'none'|'type'|'command'|'combo'|'hold_toggle'|'mouse_button'
+    text:        str       = ''
+    cmd:         str       = ''
+    keys:        list[str] = field(default_factory=list)
+    mouse_btn:   str       = 'left'   # 'left'|'right'|'middle'|'button4'|'button5'
+    mouse_mode:  str       = 'click'  # 'click'|'double_click'|'hold'
+    repeat:      bool      = False
+    repeat_rate: float     = 100.0   # interval in milliseconds
 
     def to_dict(self) -> dict:
-        return {'action': self.action, 'text': self.text, 'cmd': self.cmd}
+        return {
+            'action': self.action, 'text': self.text, 'cmd': self.cmd, 'keys': self.keys,
+            'mouse_btn': self.mouse_btn, 'mouse_mode': self.mouse_mode,
+            'repeat': self.repeat, 'repeat_rate': self.repeat_rate,
+        }
 
 
 @dataclass
@@ -64,7 +73,9 @@ class Profile:
 
 def _toml_scalar(v) -> str:
     if isinstance(v, bool):   return 'true' if v else 'false'
-    if isinstance(v, str):    return f'"{v}"'
+    if isinstance(v, str):
+        esc = v.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n').replace('\r', '\\r').replace('\t', '\\t')
+        return f'"{esc}"'
     if isinstance(v, list):   return '[' + ', '.join(_toml_scalar(i) for i in v) + ']'
     return str(v)
 
@@ -96,6 +107,11 @@ def load_profile(path: Path) -> Profile:
                 action=d[k].get('action', 'none'),
                 text=d[k].get('text', ''),
                 cmd=d[k].get('cmd', ''),
+                keys=d[k].get('keys', []),
+                mouse_btn=d[k].get('mouse_btn', 'left'),
+                mouse_mode=d[k].get('mouse_mode', 'click'),
+                repeat=d[k].get('repeat', False),
+                repeat_rate=float(d[k].get('repeat_rate', 100.0)),
             )
     return Profile(
         name=d.get('name', path.stem),

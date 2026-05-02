@@ -1,7 +1,7 @@
 """
 G-key event reader via USB HID boot-protocol reports.
 
-The G815 G-key hidraw interface sends standard 8-byte USB HID keyboard
+The Logitech G-key hidraw interface sends standard 8-byte USB HID keyboard
 reports. After the one-time onboard-profile remap written by onboard_profiles.py,
 G1–G5 appear as HID usage codes 0x68–0x6c (F13–F17) — keys that do not exist
 on the physical keyboard and cannot collide with any real key press.
@@ -27,10 +27,11 @@ def run_gkey_listener(
     hidraw_path: str,
     on_press: Callable[[str], None],
     stop_flag: Callable[[], bool],
+    on_release: Callable[[str], None] | None = None,
 ) -> None:
     """
-    Block until stop_flag() is True, calling on_press(gkey_name) for each
-    G-key press. Designed to run in a daemon thread.
+    Block until stop_flag() is True, calling on_press/on_release for each
+    G-key event. Designed to run in a daemon thread.
     """
     try:
         fd = os.open(hidraw_path, os.O_RDWR | os.O_NONBLOCK)
@@ -51,10 +52,13 @@ def run_gkey_listener(
             if len(data) < 3:
                 continue
             curr_keys = {b for b in data[2:8] if b != 0x00}
-            newly_pressed = curr_keys - prev_keys
-            prev_keys = curr_keys
-            for code in newly_pressed:
+            for code in curr_keys - prev_keys:
                 if code in _HID_TO_GKEY:
                     on_press(_HID_TO_GKEY[code])
+            if on_release:
+                for code in prev_keys - curr_keys:
+                    if code in _HID_TO_GKEY:
+                        on_release(_HID_TO_GKEY[code])
+            prev_keys = curr_keys
     finally:
         os.close(fd)

@@ -22,15 +22,20 @@ from .keyboards import detect_keyboard, LogitechKeyboard
 IPC_SOCKET = Path('/tmp/kyxen.sock')
 
 
-class OpenLogiKeyDaemon:
+class KyxenDaemon:
     def __init__(self) -> None:
         self._lock           = threading.Lock()
         self._keyboard: LogitechKeyboard | None = None
         self._device:   evdev.InputDevice | None = None
-        self._uinput:   UInput | None = None
+        self._uinput:       UInput | None = None
+        self._mouse_uinput: UInput | None = None
         self._active_profile = ''
         self._profiles:  dict[str, cfg.Profile] = {}
         self._running    = False
+        # gkey → MacroAction currently held down (hold_toggle state)
+        self._toggle_held:  dict[str, cfg.MacroAction]    = {}
+        # gkey → stop Event for active repeat loops
+        self._repeat_stops: dict[str, threading.Event]    = {}
 
     # ── startup / shutdown ────────────────────────────────────────────────────
 
@@ -72,6 +77,8 @@ class OpenLogiKeyDaemon:
 
     def stop(self) -> None:
         self._running = False
+        self._cancel_all_repeats()
+        self._release_all_toggles()
         if self._device:
             try:
                 self._device.ungrab()
@@ -79,9 +86,28 @@ class OpenLogiKeyDaemon:
                 pass
         if self._uinput:
             self._uinput.close()
+        if self._mouse_uinput:
+            self._mouse_uinput.close()
         if IPC_SOCKET.exists():
             IPC_SOCKET.unlink()
         print('[kyxen] stopped')
+
+    def _cancel_all_repeats(self) -> None:
+        with self._lock:
+            stops = dict(self._repeat_stops)
+            self._repeat_stops.clear()
+        for stop in stops.values():
+            stop.set()
+
+    def _release_all_toggles(self) -> None:
+        with self._lock:
+            held = dict(self._toggle_held)
+            self._toggle_held.clear()
+        for action in held.values():
+            if action.action == 'hold_toggle':
+                macro_runner.run_hold(action, press=False)
+            elif action.action == 'mouse_button':
+                macro_runner.run_mouse_hold(action, press=False)
 
     # ── device ────────────────────────────────────────────────────────────────
 
@@ -90,6 +116,10 @@ class OpenLogiKeyDaemon:
         self._device.grab()
         self._uinput = UInput.from_device(self._device, name='Kyxen Passthrough')
         macro_runner.set_uinput(self._uinput)
+        _mouse_caps = {ecodes.EV_KEY: [ecodes.BTN_LEFT, ecodes.BTN_RIGHT, ecodes.BTN_MIDDLE,
+                                        ecodes.BTN_SIDE, ecodes.BTN_EXTRA]}
+        self._mouse_uinput = UInput(_mouse_caps, name='Kyxen Mouse')
+        macro_runner.set_mouse_uinput(self._mouse_uinput)
         print(f'[kyxen] grabbed {self._device.name}')
 
     def _ensure_gkey_remap(self) -> bool:
@@ -125,8 +155,21 @@ class OpenLogiKeyDaemon:
         gkeys_reader.run_gkey_listener(
             hidraw_path=self._keyboard.paths.hidraw_gkeys,
             on_press=self._handle_gkey,
+            on_release=self._handle_gkey_release,
             stop_flag=lambda: not self._running,
         )
+
+    def _handle_gkey_release(self, gkey: str) -> None:
+        with self._lock:
+            stop = self._repeat_stops.pop(gkey, None)
+        if stop:
+            stop.set()
+
+    def _repeat_loop(self, action: cfg.MacroAction, stop: threading.Event) -> None:
+        interval = max(action.repeat_rate, 10.0) / 1000.0
+        while not stop.is_set():
+            macro_runner.run(action)
+            stop.wait(interval)
 
     def _handle_gkey(self, gkey: str) -> None:
         with self._lock:
@@ -134,7 +177,30 @@ class OpenLogiKeyDaemon:
         if not profile:
             return
         action = profile.macros.get(gkey)
-        if action:
+        if not action:
+            return
+        if action.repeat and action.action not in ('hold_toggle', 'none'):
+            stop = threading.Event()
+            with self._lock:
+                self._repeat_stops[gkey] = stop
+            threading.Thread(target=self._repeat_loop, args=(action, stop), daemon=True).start()
+            return
+        is_hold = (action.action == 'hold_toggle' or
+                   (action.action == 'mouse_button' and action.mouse_mode == 'hold'))
+        if is_hold:
+            with self._lock:
+                if gkey in self._toggle_held:
+                    held_action = self._toggle_held.pop(gkey)
+                else:
+                    self._toggle_held[gkey] = action
+                    held_action = None
+            release = held_action is not None
+            target  = held_action if release else action
+            if target.action == 'hold_toggle':
+                macro_runner.run_hold(target, press=not release)
+            else:
+                macro_runner.run_mouse_hold(target, press=not release)
+        else:
             macro_runner.run(action)
 
     # ── profiles ──────────────────────────────────────────────────────────────
@@ -152,6 +218,8 @@ class OpenLogiKeyDaemon:
             self._active_profile = active
 
     def switch_profile(self, name: str) -> bool:
+        self._cancel_all_repeats()
+        self._release_all_toggles()
         with self._lock:
             if name not in self._profiles:
                 return False

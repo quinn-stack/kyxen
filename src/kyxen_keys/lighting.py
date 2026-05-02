@@ -1,5 +1,5 @@
 """
-Native G815 lighting control via hidraw.
+Logitech keyboard lighting control via HID++/hidraw.
 Protocol reverse-engineered from OpenRGB source (GPL-2.0).
 
 Zones:  keyboard=0x00  logo=0x01  media=0x02  gkeys=0x03  modifiers=0x04
