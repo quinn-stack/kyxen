@@ -161,6 +161,22 @@ mode = "static"
 colour = "#00CC44"
 ```
 
+## Developer tools
+
+Several scripts in the repo root are useful when reverse-engineering a new keyboard
+or debugging the HID++ protocol. Stop `kyxen-daemon` before running any of them.
+
+| Script | Purpose |
+|--------|---------|
+| `probe_mkeys.py` | Physical key-press mapper — press each key in turn and it records the HID++ key ID. Used to build `g815_keymap.json`. |
+| `probe_lighting.py` | Lighting protocol validator — tests both confirmed HID++ approaches (GHub/Wireshark and direct-mode) against each hidraw interface, asks you to confirm keys light up correctly. |
+| `probe_gkeys.py` | G-key discovery — enables software mode on the HID++ interface and listens on both hidraw interfaces simultaneously so you can see the raw G-key events. |
+| `sniff_hidraw.py` | Raw HID++ packet sniffer — dumps everything coming off a hidraw device. Useful for watching what G Hub sends. |
+
+`g815_keymap.json` is the ground-truth key ID map for the G815, built from a
+`probe_mkeys.py` session and confirmed correct. It is the canonical source for
+key IDs in `lighting.py`.
+
 ## Adding keyboard support
 
 1. Create `src/kyxen_keys/keyboards/logitech_<model>.py`
@@ -170,8 +186,8 @@ colour = "#00CC44"
 5. Register in `src/kyxen_keys/keyboards/__init__.py` `ALL_DRIVERS`
 6. Open a PR
 
-The USB product ID is in `lsusb` output. G-key HID codes can be found with
-`sudo evtest` or by reading the onboard profile sector via `probe_gkeys.py`.
+The USB product ID is in `lsusb` output. Use `probe_mkeys.py` to map G-key HID
+codes and `probe_lighting.py` to validate lighting commands on a new model.
 
 ## A Note on AI Assistance
 
