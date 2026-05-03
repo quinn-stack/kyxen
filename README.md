@@ -11,7 +11,7 @@ account, no proprietary drivers required.
 
 | Model | G-keys | M-key profile switching | Lighting |
 |-------|--------|------------------------|---------|
-| Logitech G815 | G1–G5 | ✅ M1–M3 | ⚠️ Static colour (zone effects planned) |
+| Logitech G815 | G1–G5 | ✅ M1–M3 | ⚠️ Static colour per profile (per-key RGB capable, effects planned) |
 
 More models coming. PRs welcome — see [Adding keyboard support](#adding-keyboard-support).
 
@@ -172,6 +172,14 @@ colour = "#00CC44"
 
 The USB product ID is in `lsusb` output. G-key HID codes can be found with
 `sudo evtest` or by reading the onboard profile sector via `probe_gkeys.py`.
+
+## A Note on AI Assistance
+
+This project was heavily assisted by AI (Claude, by Anthropic) throughout its development — from architecture decisions and code review to debugging and documentation. That assistance is acknowledged openly and without hesitation.
+
+The domain knowledge, real-world requirements, design decisions, and direction are entirely human. The AI was a tool, and a valuable one. The project would not have reached this point without it.
+
+This feels worth stating plainly in an era where AI assistance is sometimes hidden or considered something to be embarrassed about. It isn't.
 
 ## Licence
 
