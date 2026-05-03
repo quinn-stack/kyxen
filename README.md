@@ -9,9 +9,9 @@ account, no proprietary drivers required.
 
 ## Supported keyboards
 
-| Model | G-keys | Lighting |
-|-------|--------|---------|
-| Logitech G815 | G1–G5 | ✅ Zone effects |
+| Model | G-keys | M-key profile switching | Lighting |
+|-------|--------|------------------------|---------|
+| Logitech G815 | G1–G5 | ✅ M1–M3 | ⚠️ Static colour (zone effects planned) |
 
 More models coming. PRs welcome — see [Adding keyboard support](#adding-keyboard-support).
 
@@ -109,8 +109,25 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 
 ## Configuration
 
-Profiles are stored in `~/.config/kyxen/profiles/` as plain TOML files.
-You can edit them by hand or use the GUI.
+### Global config — `~/.config/kyxen/config.toml`
+
+Controls the active profile and which Kyxen profile each M-key activates:
+
+```toml
+active_profile = "default"
+
+[profile_slots]
+m1 = "default"
+m2 = "gaming"
+m3 = "work"
+```
+
+If a slot is not set, pressing that M-key logs a warning and does nothing. Profile
+names must match a `.toml` file in `~/.config/kyxen/profiles/`.
+
+### Profiles — `~/.config/kyxen/profiles/<name>.toml`
+
+Profiles are stored as plain TOML files. You can edit them by hand or use the GUI.
 
 ```toml
 name = "default"

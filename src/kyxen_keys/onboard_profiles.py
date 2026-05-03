@@ -1,29 +1,68 @@
 """
-ONBOARD_PROFILES (HID++ 0x8100) write support.
+HID++ feature utilities and ONBOARD_PROFILES (0x8100) sector access.
 
+Feature index lookup
+---------------------
+get_feature_index(hidraw_path, uuid) looks up the runtime index for any
+HID++ 2.0 feature UUID via the ROOT feature (index 0x00, func=0 getFeature).
+Feature indices are NOT fixed — always look them up rather than hardcoding.
+
+Known G815 feature UUIDs relevant to Kyxen:
+  0x8010 — idx 0x0a — must be enabled before M-key notifications work
+  0x8020 — idx 0x0b — M-key profile switch (notifications + activation)
+  0x8100 — idx 0x11 — ONBOARD_PROFILES (sector read/write)
+
+These are separate features. 0x8020 handles profile switching; 0x8100
+handles raw sector access only.
+
+ONBOARD_PROFILES sector access
+--------------------------------
 Used once at daemon startup to remap G1–G5 from F1–F5 (HID 0x3a–0x3e)
 to F13–F17 (HID 0x68–0x6c) in keyboard flash, so evdev G-key events are
 unambiguous and never collide with physical F-key presses.
 
-Write protocol (confirmed from libratbag source + Solaar source):
-  func=5  readData(sector, offset)       → 16 bytes  (long report 0x11)
-  func=6  writeStart(sector, 0, 256)     → ack       (long report 0x11, sub_addr always 0)
-  func=7  writeData(16 bytes)            → ack       (long report 0x11, repeated ×16)
+Sectors:
+  ROM   0x0101–0x0103 — factory defaults, read-only
+  User  0x0001–0x0003 — writable flash (one per M-key profile slot)
+
+Write protocol (confirmed from libratbag source + Solaar source + USB capture):
+  func=5  readData(sector, offset)       → 16 bytes  (LONG report 0x11)
+  func=6  writeStart(sector, 0, 256)     → ack       (LONG report 0x11)
+  func=7  writeData(16 bytes) × 16       → ack       (LONG report 0x11)
   func=8  writeEnd()                     → ack       (SHORT report 0x10)
-  CRC-CCITT over bytes[0:254], stored BE at bytes[254:256]
+  CRC-CCITT (poly=0x1021, init=0xFFFF) over bytes[0:254], stored BE at [254:256]
+
+_send() robustness note
+------------------------
+The HID++ hidraw interface also carries non-HID++ reports (media keys, boot
+reports with IDs 0x01/0x02/0x03). _send() discards any packet whose first byte
+is not 0x10/0x11/0x12 and retries within the timeout, so stale buffered reports
+do not corrupt HID++ request/response pairing.
 """
 from __future__ import annotations
 import os
 import select
 import struct
+import time
 
 _LONG  = 0x11   # 20-byte HID++ long report ID
 _SHORT = 0x10   # 7-byte HID++ short report ID
 
-SECTOR_ROM_1      = 0x0101   # profile 1 ROM sector — factory defaults, read-only
-SECTOR_USER_1     = 0x0001   # profile 1 user sector — writable RAM/flash
+SECTOR_ROM_1  = 0x0101   # profile 1 ROM sector — factory defaults, read-only
+SECTOR_ROM_2  = 0x0102   # profile 2 ROM sector
+SECTOR_ROM_3  = 0x0103   # profile 3 ROM sector
+SECTOR_USER_1 = 0x0001   # profile 1 user sector — writable flash
+SECTOR_USER_2 = 0x0002   # profile 2 user sector — writable flash
+SECTOR_USER_3 = 0x0003   # profile 3 user sector — writable flash
+
 SECTOR_SIZE       = 0x0100   # 256 bytes per sector
 GKEY_BLOCK_OFFSET = 0x0020   # offset of first G-key entry in the sector
+
+_PROFILE_SECTORS = [
+    (SECTOR_ROM_1, SECTOR_USER_1),
+    (SECTOR_ROM_2, SECTOR_USER_2),
+    (SECTOR_ROM_3, SECTOR_USER_3),
+]
 
 # HID keyboard usages: current (F1–F5) and target (F13–F17)
 _F1_F5   = bytes([0x3a, 0x3b, 0x3c, 0x3d, 0x3e])
@@ -58,14 +97,22 @@ def _short(feat: int, func: int) -> bytes:
 
 def _send(fd: int, pkt: bytes, timeout: float = 3.0) -> bytes:
     os.write(fd, pkt)
-    r, _, _ = select.select([fd], [], [], timeout)
-    if not r:
-        raise TimeoutError('no response from keyboard')
-    resp = os.read(fd, 64)
-    # HID++ error response: byte[2]=0xff, byte[3]=feature_idx, byte[4]=func, byte[5]=error
-    if len(resp) >= 3 and resp[2] == 0xff:
-        raise RuntimeError(f'HID++ error: {resp.hex()}')
-    return resp
+    deadline = time.monotonic() + timeout
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError('no response from keyboard')
+        r, _, _ = select.select([fd], [], [], remaining)
+        if not r:
+            raise TimeoutError('no response from keyboard')
+        resp = os.read(fd, 64)
+        # Discard non-HID++ packets (e.g. buffered media key / boot-protocol reports)
+        if not resp or resp[0] not in (0x10, 0x11, 0x12):
+            continue
+        # HID++ 2.0 error: SHORT report, feature index 0x8f
+        if resp[0] == 0x10 and len(resp) >= 3 and resp[2] == 0x8f:
+            raise RuntimeError(f'HID++ error: {resp.hex()}')
+        return resp
 
 
 # ── sector operations ─────────────────────────────────────────────────────────
@@ -76,7 +123,13 @@ def _read_full_sector(fd: int, feat: int, sector: int) -> bytearray:
     for offset in range(0, SECTOR_SIZE, 16):
         params = struct.pack('>HH', sector, offset)
         resp = _send(fd, _long(feat, 5, params))
-        data.extend(resp[4:20])
+        chunk = resp[4:20]
+        if len(chunk) < 16:
+            raise RuntimeError(
+                f'sector 0x{sector:04x} offset 0x{offset:02x}: '
+                f'short response ({len(resp)} bytes): {resp.hex()}'
+            )
+        data.extend(chunk)
     return data
 
 
@@ -123,35 +176,58 @@ def _is_remapped(data: bytearray) -> bool:
     return data[GKEY_BLOCK_OFFSET + 3] == _F13_F17[0]
 
 
-# ── public entry point ────────────────────────────────────────────────────────
+def _crc_valid(data: bytearray) -> bool:
+    """Return True if the sector's stored CRC matches its content (rules out uninitialised flash)."""
+    expected = _crc_ccitt(bytes(data[:SECTOR_SIZE - 2]))
+    stored   = struct.unpack_from('>H', data, SECTOR_SIZE - 2)[0]
+    return expected == stored
+
+
+# ── public entry points ───────────────────────────────────────────────────────
+
+def get_feature_index(hidraw_path: str, uuid: int) -> int:
+    """Return the runtime feature index for a 16-bit HID++ UUID (via ROOT getFeature)."""
+    fd = os.open(hidraw_path, os.O_RDWR)
+    try:
+        resp = _send(fd, _long(0x00, 0, struct.pack('>H', uuid)))
+        feat_idx = resp[4]
+        if feat_idx == 0:
+            raise RuntimeError(f'feature 0x{uuid:04x} not supported by keyboard')
+        return feat_idx
+    finally:
+        os.close(fd)
+
 
 def ensure_gkey_remap(hidraw_path: str, feature_idx: int) -> bool:
     """
-    Check keyboard flash; remap G1–G5 → F13–F17 if not already done.
+    Check keyboard flash; remap G1–G5 → F13–F17 across all 3 profiles.
 
-    Reads from the ROM sector (0x0101, factory defaults) as source and
-    writes the patched profile to the user sector (0x0001, writable).
-    Returns True if a write was performed, False if already remapped.
+    Reads each ROM sector (0x0101–0x0103) as the source and writes the patched
+    data to the corresponding user sector (0x0001–0x0003). All 3 must be valid
+    for M-key profile switching to work.
+    Returns True if any write was performed, False if already fully remapped.
     Raises on I/O error or keyboard timeout.
     """
     fd = os.open(hidraw_path, os.O_RDWR)
     try:
-        # Check the user sector first — if it already has the remap, done
-        user_data = _read_full_sector(fd, feature_idx, SECTOR_USER_1)
-        if _is_remapped(user_data):
-            print('[onboard] G-key remap already F13–F17, skipping')
+        # Read all 3 user sectors; skip write only if every sector is already
+        # remapped AND has a valid CRC (rules out uninitialised flash with 0xFF bytes).
+        user_data = [_read_full_sector(fd, feature_idx, addr)
+                     for _, addr in _PROFILE_SECTORS]
+        if all(_is_remapped(s) and _crc_valid(s) for s in user_data):
+            print('[onboard] G-key remap already F13–F17 on all profiles, skipping')
             return False
 
-        # Read ROM sector as authoritative source for current G-key bindings
-        print('[onboard] remapping G1–G5 → F13–F17 in keyboard flash...')
-        rom_data = _read_full_sector(fd, feature_idx, SECTOR_ROM_1)
-        _patch_gkeys(rom_data)
-        _apply_crc(rom_data)
+        # Write all 3 profiles so M-key switching has valid flash for each slot.
+        print('[onboard] remapping G1–G5 → F13–F17 in keyboard flash (all 3 profiles)...')
+        for rom_addr, user_addr in _PROFILE_SECTORS:
+            rom_data = _read_full_sector(fd, feature_idx, rom_addr)
+            _patch_gkeys(rom_data)
+            _apply_crc(rom_data)
+            _write_full_sector(fd, feature_idx, user_addr, rom_data)
 
-        # Write patched profile to writable user sector and activate it
-        _write_full_sector(fd, feature_idx, SECTOR_USER_1, rom_data)
         _set_current_profile(fd, feature_idx, 0)   # profile index 0 = profile 1
-        print('[onboard] remap written and saved')
+        print('[onboard] all 3 profiles remapped and saved')
         return True
     finally:
         os.close(fd)

@@ -639,6 +639,54 @@ class ProfilePanel(QWidget):
         self.profile_saved.emit(self._profile.name)
 
 
+# ── M-key slot assignment widget ─────────────────────────────────────────────
+
+class MKeySlotsWidget(QGroupBox):
+    """Three dropdowns assigning profiles to M1/M2/M3."""
+
+    def __init__(self, parent=None):
+        super().__init__('M-key slots', parent)
+        self._combos: dict[str, QComboBox] = {}
+        self._build_ui()
+
+    def _build_ui(self):
+        layout = QFormLayout(self)
+        layout.setContentsMargins(4, 6, 4, 4)
+        layout.setSpacing(4)
+        for key in ('m1', 'm2', 'm3'):
+            cb = QComboBox()
+            layout.addRow(key.upper() + ':', cb)
+            self._combos[key] = cb
+        save_btn = QPushButton('Save slots')
+        save_btn.clicked.connect(self._save)
+        layout.addRow(save_btn)
+
+    def refresh(self, profiles: list[cfg.Profile]):
+        gcfg  = cfg.load_global_config()
+        slots = gcfg.get('profile_slots', {})
+        for key, cb in self._combos.items():
+            cb.blockSignals(True)
+            cb.clear()
+            cb.addItem('(none)', '')
+            for p in profiles:
+                cb.addItem(p.display_name, p.name)
+            current = slots.get(key, '')
+            idx = cb.findData(current)
+            cb.setCurrentIndex(idx if idx >= 0 else 0)
+            cb.blockSignals(False)
+
+    def _save(self):
+        gcfg  = cfg.load_global_config()
+        slots = {}
+        for key, cb in self._combos.items():
+            val = cb.currentData()
+            if val:
+                slots[key] = val
+        gcfg['profile_slots'] = slots
+        cfg.save_global_config(gcfg)
+        daemon.daemon_reload()
+
+
 # ── main window ───────────────────────────────────────────────────────────────
 
 class MainWindow(QMainWindow):
@@ -656,7 +704,7 @@ class MainWindow(QMainWindow):
 
         # left: profile list
         left = QWidget()
-        left.setFixedWidth(180)
+        left.setFixedWidth(200)
         left_layout = QVBoxLayout(left)
         left_layout.setContentsMargins(4, 4, 4, 4)
 
@@ -676,6 +724,10 @@ class MainWindow(QMainWindow):
             b.setMaximumWidth(70)
             btn_row.addWidget(b)
         left_layout.addLayout(btn_row)
+
+        # M-key slot assignment
+        self._mkey_slots = MKeySlotsWidget()
+        left_layout.addWidget(self._mkey_slots)
 
         # daemon status indicator
         self._status_label = QLabel()
@@ -714,6 +766,7 @@ class MainWindow(QMainWindow):
                 self._profile_list.setCurrentRow(i)
         if self._profile_list.currentRow() < 0 and self._profiles:
             self._profile_list.setCurrentRow(0)
+        self._mkey_slots.refresh(self._profiles)
 
     def _on_profile_selected(self, row: int):
         for i in reversed(range(self._right_layout.count())):

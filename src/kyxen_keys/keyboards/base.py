@@ -38,8 +38,9 @@ class LogitechKeyboard(ABC):
     # ── required overrides ────────────────────────────────────────────────────
 
     @abstractmethod
-    def apply_lighting(self, mode: str, colour: str) -> None:
-        """Push a lighting state to the keyboard (mode: 'static'|'breathing'|'wave'|'off')."""
+    def apply_lighting(self, mode: str, colour: str, active_mkey: int | None = None) -> None:
+        """Push a lighting state to the keyboard (mode: 'static'|'breathing'|'wave'|'off').
+        active_mkey: 0-indexed M-key to highlight (0=M1, 1=M2, 2=M3), or None."""
         ...
 
     # ── detection helpers (override _is_gkey_interface if needed) ────────────

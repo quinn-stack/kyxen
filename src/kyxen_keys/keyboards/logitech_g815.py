@@ -59,8 +59,9 @@ class LogitechG815(LogitechKeyboard):
             self.ONBOARD_PROFILES_FEATURE_IDX,
         )
 
-    def apply_lighting(self, mode: str, colour: str) -> None:
+    def apply_lighting(self, mode: str, colour: str, active_mkey: int | None = None) -> None:
         if not self.paths.hidraw:
             return
         from .. import lighting
         lighting.apply_profile(self.paths.hidraw, mode, colour)
+        lighting.apply_mkey_indicators(self.paths.hidraw, active_mkey, colour)

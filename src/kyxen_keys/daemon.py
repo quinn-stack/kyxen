@@ -67,6 +67,26 @@ class KyxenDaemon:
         else:
             print('[kyxen] WARNING: no G-key hidraw path found')
 
+        hidraw = self._keyboard.paths.hidraw
+        if hidraw:
+            try:
+                from . import onboard_profiles
+                feat_8010 = onboard_profiles.get_feature_index(hidraw, 0x8010)
+                feat_8020 = onboard_profiles.get_feature_index(hidraw, 0x8020)
+                threading.Thread(
+                    target=self._mkey_hid_loop, args=(feat_8010, feat_8020), daemon=True
+                ).start()
+                print(f'[kyxen] M-key detection: 0x8010=0x{feat_8010:02x} 0x8020=0x{feat_8020:02x} on {hidraw}')
+            except Exception as e:
+                print(f'[kyxen] WARNING: M-key listener not started: {e}')
+
+        # Apply startup lighting so keyboard reflects the active profile immediately.
+        if self._keyboard and self._active_profile in self._profiles:
+            profile = self._profiles[self._active_profile]
+            self._keyboard.apply_lighting(
+                profile.lighting_mode, profile.lighting_colour,
+                self._active_mkey_for(self._active_profile),
+            )
         print(f'[kyxen] active profile: {self._active_profile}')
 
         try:
@@ -159,6 +179,23 @@ class KyxenDaemon:
             stop_flag=lambda: not self._running,
         )
 
+    def _mkey_hid_loop(self, feat_8010: int, feat_8020: int) -> None:
+        gkeys_reader.run_mkey_listener(
+            hidraw_path=self._keyboard.paths.hidraw,
+            feat_8010_idx=feat_8010,
+            feat_8020_idx=feat_8020,
+            on_mkey=self._handle_mkey,
+            stop_flag=lambda: not self._running,
+        )
+
+    def _handle_mkey(self, mkey_idx: int) -> None:
+        gcfg = cfg.load_global_config()
+        name = gcfg.get('profile_slots', {}).get(f'm{mkey_idx + 1}')
+        if name:
+            self.switch_profile(name)
+        else:
+            print(f'[kyxen] M{mkey_idx + 1} pressed — no profile_slots.m{mkey_idx + 1} in config')
+
     def _handle_gkey_release(self, gkey: str) -> None:
         with self._lock:
             stop = self._repeat_stops.pop(gkey, None)
@@ -229,9 +266,20 @@ class KyxenDaemon:
             cfg.save_global_config(gcfg)
         if self._keyboard:
             profile = self._profiles[name]
-            self._keyboard.apply_lighting(profile.lighting_mode, profile.lighting_colour)
+            self._keyboard.apply_lighting(
+                profile.lighting_mode, profile.lighting_colour,
+                self._active_mkey_for(name),
+            )
         print(f'[kyxen] profile → {name}')
         return True
+
+    def _active_mkey_for(self, profile_name: str) -> int | None:
+        """Return 0-based M-key index if profile_name is assigned to an M-key slot, else None."""
+        slots = cfg.load_global_config().get('profile_slots', {})
+        for key, val in slots.items():
+            if val == profile_name and key.startswith('m') and key[1:].isdigit():
+                return int(key[1:]) - 1
+        return None
 
     def reload_config(self) -> None:
         self._load_profiles()
