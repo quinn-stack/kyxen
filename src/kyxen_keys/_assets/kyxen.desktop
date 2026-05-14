@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Kyxen
+GenericName=G-key Macro Manager
+Comment=Configure Logitech G-key macros, profiles, and lighting
+Exec=__EXEC__
+Icon=input-keyboard
+Terminal=false
+Categories=Settings;HardwareSettings;
+StartupNotify=false
+StartupWMClass=Kyxen
+Keywords=logitech;gkey;macro;keyboard;rgb;

@@ -35,3 +35,6 @@ Issues     = "https://github.com/quinn-stack/kyxen/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"kyxen_keys._assets" = ["*.service", "*.desktop"]
