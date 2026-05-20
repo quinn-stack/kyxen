@@ -1,0 +1,15 @@
+[Unit]
+Description=Kyxen — Logitech G-key macro daemon
+Documentation=https://github.com/quinn-stack/kyxen
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=__EXEC_START__
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

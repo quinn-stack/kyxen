@@ -68,9 +68,33 @@ and macros.
 
 ### Auto-start with your session
 
+Kyxen runs as a **systemd user service** — no root, no system-wide unit. One
+command registers and starts it:
+
 ```bash
-systemctl --user enable --now kyxen
+kyxen-daemon install-service
 ```
+
+This writes `~/.config/systemd/user/kyxen.service`, reloads the user manager,
+and runs `systemctl --user enable --now kyxen`. To uninstall:
+
+```bash
+kyxen-daemon uninstall-service
+```
+
+Useful flags: `--no-start` (install + enable without starting now),
+`--no-enable` (install only, don't enable). To inspect the unit before
+installing, run `kyxen-daemon print-service`.
+
+### Show in your app launcher
+
+```bash
+kyxen-daemon install-desktop
+```
+
+Writes `~/.local/share/applications/kyxen.desktop` so Kyxen appears in your
+desktop environment's app launcher. Remove with
+`kyxen-daemon uninstall-desktop`, preview with `kyxen-daemon print-desktop`.
 
 ## Macro types
 

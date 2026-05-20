@@ -44,6 +44,7 @@ _KH_FN    = 18   # function-row key height px
 _RGAP     =  3   # gap between rows px
 _MARGIN   =  6   # outer margin px
 _FN_EXTRA =  5   # extra gap below function row
+_FN_ROWS  =  2   # number of rows at the top using _KH_FN height
 
 # Qt key code → macro key name
 _QT_TO_NAME: dict[int, str] = {
@@ -69,7 +70,7 @@ _QT_TO_NAME: dict[int, str] = {
     int(Qt.Key_Insert):     'insert',
     int(Qt.Key_Delete):     'delete',
     int(Qt.Key_Menu):       'menu',
-    **{int(getattr(Qt, f'Key_F{i}')): f'f{i}' for i in range(1, 18)},
+    **{int(getattr(Qt, f'Key_F{i}')): f'f{i}' for i in range(1, 25)},
     int(Qt.Key_Minus):        '-',
     int(Qt.Key_Equal):        '=',
     int(Qt.Key_BracketLeft):  '[',
@@ -88,12 +89,17 @@ for _ch in '0123456789':
     _QT_TO_NAME[ord(_ch)] = _ch
 
 # (display_label, key_name_or_None_for_gap, width_units)
+# Rows with kh == _KH_FN use the shorter function-row height (see _build).
 _KB_ROWS: list[list[tuple[str, str | None, float]]] = [
     # Function row
     [('Esc', 'escape', 1), ('', None, 0.5),
      ('F1', 'f1', 1), ('F2', 'f2', 1), ('F3', 'f3', 1), ('F4', 'f4', 1), ('', None, 0.5),
      ('F5', 'f5', 1), ('F6', 'f6', 1), ('F7', 'f7', 1), ('F8', 'f8', 1), ('', None, 0.5),
      ('F9', 'f9', 1), ('F10', 'f10', 1), ('F11', 'f11', 1), ('F12', 'f12', 1)],
+    # Extended function row — F13–F20 (aligned under F5–F12)
+    [('', None, 6),
+     ('F13', 'f13', 1), ('F14', 'f14', 1), ('F15', 'f15', 1), ('F16', 'f16', 1), ('', None, 0.5),
+     ('F17', 'f17', 1), ('F18', 'f18', 1), ('F19', 'f19', 1), ('F20', 'f20', 1)],
     # Number row
     [('`', '`', 1), ('1', '1', 1), ('2', '2', 1), ('3', '3', 1), ('4', '4', 1), ('5', '5', 1),
      ('6', '6', 1), ('7', '7', 1), ('8', '8', 1), ('9', '9', 1), ('0', '0', 1),
@@ -181,7 +187,8 @@ class KeyboardWidget(QWidget):
         y = _MARGIN
         main_row_w = 0
         for row_idx, row in enumerate(_KB_ROWS):
-            kh = _KH_FN if row_idx == 0 else _KH
+            is_fn = row_idx < _FN_ROWS
+            kh = _KH_FN if is_fn else _KH
             x  = _MARGIN
             for label, name, w in row:
                 px_w = int(w * _UNIT)
@@ -195,14 +202,14 @@ class KeyboardWidget(QWidget):
                     self._buttons.setdefault(name, []).append(btn)
                 x += px_w
             main_row_w = max(main_row_w, x)
-            extra = _FN_EXTRA if row_idx == 0 else 0
+            extra = _FN_EXTRA if row_idx == _FN_ROWS - 1 else 0
             y += kh + _RGAP + extra
 
         last_main_bottom = y - _RGAP
         total_h = last_main_bottom + _MARGIN
 
         # Arrow keys: right of main keyboard, aligned with ZXCV + bottom rows
-        zxcv_y  = (_MARGIN + _KH_FN + _RGAP + _FN_EXTRA + 3 * (_KH + _RGAP))
+        zxcv_y  = (_MARGIN + _FN_ROWS * (_KH_FN + _RGAP) + _FN_EXTRA + 3 * (_KH + _RGAP))
         arrow_x = main_row_w + 8
         for i, row in enumerate(_ARROW_ROWS):
             ay = zxcv_y + i * (_KH + _RGAP)
