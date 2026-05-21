@@ -19,62 +19,30 @@ from collections.abc import Callable
 
 from .lighting_config import LightingConfig, Keyframe
 from .lighting import KEY_IDS
+from .keyboard_layout import LAYOUT as _LAYOUT
 
 _TICK = 0.05   # 20fps
 
 # ── Key positions ─────────────────────────────────────────────────────────────
-# Normalised (x, y) per key: x 0.0=leftmost (G1), 1.0=rightmost (NUM_PERIOD);
-# y 0.0=top (media row), 1.0=bottom (space row). Used by directional presets.
+# Computed from LAYOUT at module load — normalised (x, y) with 0.0=top/left,
+# 1.0=bottom/right based on key-centre coordinates. Single source of truth.
 
-_KEY_POSITIONS: dict[str, tuple[float, float]] = {
-    'G1': (0.00, 0.30), 'G2': (0.00, 0.43), 'G3': (0.00, 0.57),
-    'G4': (0.00, 0.70), 'G5': (0.00, 0.83),
-    'LOGO': (0.03, 0.00),
-    'ILLUMINATION': (0.32, 0.00),
-    'MEDIA_PREV': (0.86, 0.00), 'PLAY_PAUSE': (0.90, 0.00),
-    'MEDIA_NEXT': (0.94, 0.00), 'MUTE': (0.98, 0.00),
-    'ESC':  (0.04, 0.14),
-    'F1':  (0.11, 0.14), 'F2':  (0.15, 0.14), 'F3':  (0.19, 0.14), 'F4':  (0.23, 0.14),
-    'F5':  (0.28, 0.14), 'F6':  (0.32, 0.14), 'F7':  (0.36, 0.14), 'F8':  (0.40, 0.14),
-    'F9':  (0.48, 0.14), 'F10': (0.52, 0.14), 'F11': (0.56, 0.14), 'F12': (0.60, 0.14),
-    'PRINT_SCREEN': (0.72, 0.14), 'SCROLL_LOCK': (0.76, 0.14), 'PAUSE': (0.80, 0.14),
-    'BACKTICK': (0.04, 0.28),
-    '1': (0.08, 0.28), '2': (0.12, 0.28), '3': (0.16, 0.28), '4': (0.20, 0.28),
-    '5': (0.24, 0.28), '6': (0.28, 0.28), '7': (0.32, 0.28), '8': (0.36, 0.28),
-    '9': (0.40, 0.28), '0': (0.44, 0.28),
-    'MINUS': (0.48, 0.28), 'EQUALS': (0.52, 0.28), 'BACKSPACE': (0.57, 0.28),
-    'INSERT': (0.72, 0.28), 'HOME': (0.76, 0.28), 'PAGE_UP': (0.80, 0.28),
-    'NUM_LOCK': (0.86, 0.28), 'NUM_SLASH': (0.90, 0.28),
-    'NUM_STAR': (0.94, 0.28), 'NUM_MINUS': (0.98, 0.28),
-    'TAB': (0.06, 0.43),
-    'Q': (0.11, 0.43), 'W': (0.15, 0.43), 'E': (0.19, 0.43), 'R': (0.23, 0.43),
-    'T': (0.27, 0.43), 'Y': (0.31, 0.43), 'U': (0.35, 0.43), 'I': (0.39, 0.43),
-    'O': (0.43, 0.43), 'P': (0.47, 0.43),
-    'L_BRACKET': (0.51, 0.43), 'R_BRACKET': (0.55, 0.43), 'RETURN': (0.59, 0.43),
-    'DELETE': (0.72, 0.43), 'END': (0.76, 0.43), 'PAGE_DOWN': (0.80, 0.43),
-    'NUM_7': (0.86, 0.43), 'NUM_8': (0.90, 0.43), 'NUM_9': (0.94, 0.43),
-    'NUM_PLUS': (0.98, 0.47),
-    'CAPS_LOCK': (0.06, 0.57),
-    'A': (0.11, 0.57), 'S': (0.15, 0.57), 'D': (0.19, 0.57), 'F': (0.23, 0.57),
-    'G': (0.27, 0.57), 'H': (0.31, 0.57), 'J': (0.35, 0.57), 'K': (0.39, 0.57),
-    'L': (0.43, 0.57), 'SEMICOLON': (0.47, 0.57), 'APOSTROPHE': (0.51, 0.57),
-    'HASH': (0.55, 0.57),
-    'NUM_4': (0.86, 0.57), 'NUM_5': (0.90, 0.57), 'NUM_6': (0.94, 0.57),
-    'L_SHIFT': (0.05, 0.70), 'BACKSLASH': (0.10, 0.70),
-    'Z': (0.14, 0.70), 'X': (0.18, 0.70), 'C': (0.22, 0.70), 'V': (0.26, 0.70),
-    'B': (0.30, 0.70), 'N': (0.34, 0.70), 'M': (0.38, 0.70),
-    'COMMA': (0.42, 0.70), 'PERIOD': (0.46, 0.70), 'R_SLASH': (0.50, 0.70),
-    'R_SHIFT': (0.57, 0.70),
-    'UP': (0.76, 0.70),
-    'NUM_1': (0.86, 0.70), 'NUM_2': (0.90, 0.70), 'NUM_3': (0.94, 0.70),
-    'NUM_ENTER': (0.98, 0.78),
-    'L_CTRL': (0.05, 0.86), 'L_SUPER': (0.09, 0.86), 'L_ALT': (0.13, 0.86),
-    'SPACE': (0.31, 0.86),
-    'R_ALT': (0.49, 0.86), 'R_SUPER': (0.53, 0.86), 'CONTEXT': (0.57, 0.86),
-    'R_CTRL': (0.61, 0.86),
-    'LEFT': (0.72, 0.86), 'DOWN': (0.76, 0.86), 'RIGHT': (0.80, 0.86),
-    'NUM_0': (0.88, 0.86), 'NUM_PERIOD': (0.98, 0.86),
-}
+def _build_key_positions() -> dict[str, tuple[float, float]]:
+    x_min = min(kr.x          for kr in _LAYOUT)
+    x_max = max(kr.x + kr.w   for kr in _LAYOUT)
+    y_min = min(kr.y          for kr in _LAYOUT)
+    y_max = max(kr.y + kr.h   for kr in _LAYOUT)
+    x_span = max(x_max - x_min, 0.001)
+    y_span = max(y_max - y_min, 0.001)
+    return {
+        kr.name: (
+            (kr.x + kr.w / 2 - x_min) / x_span,
+            (kr.y + kr.h / 2 - y_min) / y_span,
+        )
+        for kr in _LAYOUT
+    }
+
+_KEY_POSITIONS: dict[str, tuple[float, float]] = _build_key_positions()
 
 
 # ── Colour helpers ────────────────────────────────────────────────────────────
