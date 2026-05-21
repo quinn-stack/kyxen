@@ -33,7 +33,6 @@ _Y_QWER  =  2.59
 _Y_ASDF  =  3.64
 _Y_ZXCV  =  4.69
 _Y_BOT   =  5.74
-_Y_LOGO  =  6.90;  _H_LOGO  = 0.50
 
 # X offsets (key units)
 _X_MAIN  = 1.25   # main block starts after G-keys + gap
@@ -62,36 +61,44 @@ _LAYOUT: list[_KeyRect] = [
     _KeyRect('G4', 0, _Y_ZXCV, 1.0, _H_ROW),
     _KeyRect('G5', 0, _Y_BOT,  1.0, _H_ROW),
 
-    # M-keys + Game Mode (top-left, same row as media keys) ──────────────────
-    _KeyRect('GAME_MODE', 0.00, _Y_MEDIA, 0.75, _H_MEDIA),
-    _KeyRect('M1',        0.75, _Y_MEDIA, 0.75, _H_MEDIA),
-    _KeyRect('M2',        1.50, _Y_MEDIA, 0.75, _H_MEDIA),
-    _KeyRect('M3',        2.25, _Y_MEDIA, 0.75, _H_MEDIA),
+    # Logo — diagonally up-left of ESC ────────────────────────────────────────
+    _KeyRect('LOGO',         0.25,             _Y_MEDIA, 0.75, _H_MEDIA),
 
-    # Media keys ──────────────────────────────────────────────────────────────
-    _KeyRect('MEDIA_PREV', _X_MAIN + 11.75, _Y_MEDIA, 1.0, _H_MEDIA),
-    _KeyRect('PLAY_PAUSE', _X_MAIN + 12.75, _Y_MEDIA, 1.0, _H_MEDIA),
-    _KeyRect('MEDIA_NEXT', _X_MAIN + 13.75, _Y_MEDIA, 1.0, _H_MEDIA),
-    _KeyRect('MUTE',       _X_MAIN + 14.75, _Y_MEDIA, 1.0, _H_MEDIA),
+    # M-keys (M1–M3) and MR above F1–F4; GM above F5 (non-addressable) ───────
+    _KeyRect('M1',           _X_MAIN + 1.75,  _Y_MEDIA, 1.00, _H_MEDIA),
+    _KeyRect('M2',           _X_MAIN + 2.75,  _Y_MEDIA, 1.00, _H_MEDIA),
+    _KeyRect('M3',           _X_MAIN + 3.75,  _Y_MEDIA, 1.00, _H_MEDIA),
+    _KeyRect('MR',           _X_MAIN + 4.75,  _Y_MEDIA, 1.00, _H_MEDIA),
+    _KeyRect('GAME_MODE',    _X_MAIN + 6.25,  _Y_MEDIA, 1.00, _H_MEDIA),
 
-    # Fn row ──────────────────────────────────────────────────────────────────
-    _KeyRect('ESC',          _X_MAIN + 0.00, _Y_FN, 1.0, _H_FN),
-    _KeyRect('F1',           _X_MAIN + 1.50, _Y_FN, 1.0, _H_FN),
-    _KeyRect('F2',           _X_MAIN + 2.50, _Y_FN, 1.0, _H_FN),
-    _KeyRect('F3',           _X_MAIN + 3.50, _Y_FN, 1.0, _H_FN),
-    _KeyRect('F4',           _X_MAIN + 4.50, _Y_FN, 1.0, _H_FN),
-    _KeyRect('F5',           _X_MAIN + 5.75, _Y_FN, 1.0, _H_FN),
-    _KeyRect('F6',           _X_MAIN + 6.75, _Y_FN, 1.0, _H_FN),
-    _KeyRect('F7',           _X_MAIN + 7.75, _Y_FN, 1.0, _H_FN),
-    _KeyRect('F8',           _X_MAIN + 8.75, _Y_FN, 1.0, _H_FN),
-    _KeyRect('F9',           _X_MAIN + 10.00, _Y_FN, 1.0, _H_FN),
-    _KeyRect('F10',          _X_MAIN + 11.00, _Y_FN, 1.0, _H_FN),
-    _KeyRect('F11',          _X_MAIN + 12.00, _Y_FN, 1.0, _H_FN),
-    _KeyRect('F12',          _X_MAIN + 13.00, _Y_FN, 1.0, _H_FN),
-    _KeyRect('PRINT_SCREEN', _X_MAIN + 14.25, _Y_FN, 1.0, _H_FN),
-    _KeyRect('SCROLL_LOCK',  _X_MAIN + 15.25, _Y_FN, 1.0, _H_FN),
-    _KeyRect('PAUSE',        _X_MAIN + 16.25, _Y_FN, 1.0, _H_FN),
-    _KeyRect('ILLUMINATION', _X_MAIN + 17.25, _Y_FN, 1.0, _H_FN),
+    # Illumination above F6 ───────────────────────────────────────────────────
+    _KeyRect('ILLUMINATION', _X_MAIN + 7.25,  _Y_MEDIA, 1.00, _H_MEDIA),
+
+    # Media keys above numpad (PREV/PLAY/NEXT/MUTE above NUM / / * -) ─────────
+    _KeyRect('MEDIA_PREV',   _X_NP + 0.00,    _Y_MEDIA, 1.00, _H_MEDIA),
+    _KeyRect('PLAY_PAUSE',   _X_NP + 1.00,    _Y_MEDIA, 1.00, _H_MEDIA),
+    _KeyRect('MEDIA_NEXT',   _X_NP + 2.00,    _Y_MEDIA, 1.00, _H_MEDIA),
+    _KeyRect('MUTE',         _X_NP + 3.00,    _Y_MEDIA, 1.00, _H_MEDIA),
+
+    # Fn row — F1–F4 group, 0.50u gap, F5–F8 group, 1.00u gap, F9–F12 group ──
+    # F12 right edge aligns with BACKSPACE right edge; PRTSC/SCRLK/PAUSE sit
+    # directly above INS/HOME/PG UP in the nav column.
+    _KeyRect('ESC',          _X_MAIN + 0.00,  _Y_FN, 1.0, _H_FN),
+    _KeyRect('F1',           _X_MAIN + 1.75,  _Y_FN, 1.0, _H_FN),
+    _KeyRect('F2',           _X_MAIN + 2.75,  _Y_FN, 1.0, _H_FN),
+    _KeyRect('F3',           _X_MAIN + 3.75,  _Y_FN, 1.0, _H_FN),
+    _KeyRect('F4',           _X_MAIN + 4.75,  _Y_FN, 1.0, _H_FN),
+    _KeyRect('F5',           _X_MAIN + 6.25,  _Y_FN, 1.0, _H_FN),
+    _KeyRect('F6',           _X_MAIN + 7.25,  _Y_FN, 1.0, _H_FN),
+    _KeyRect('F7',           _X_MAIN + 8.25,  _Y_FN, 1.0, _H_FN),
+    _KeyRect('F8',           _X_MAIN + 9.25,  _Y_FN, 1.0, _H_FN),
+    _KeyRect('F9',           _X_MAIN + 11.25, _Y_FN, 1.0, _H_FN),
+    _KeyRect('F10',          _X_MAIN + 12.25, _Y_FN, 1.0, _H_FN),
+    _KeyRect('F11',          _X_MAIN + 13.25, _Y_FN, 1.0, _H_FN),
+    _KeyRect('F12',          _X_MAIN + 14.25, _Y_FN, 1.0, _H_FN),
+    _KeyRect('PRINT_SCREEN', _X_NAV + 0.00,   _Y_FN, 1.0, _H_FN),
+    _KeyRect('SCROLL_LOCK',  _X_NAV + 1.00,   _Y_FN, 1.0, _H_FN),
+    _KeyRect('PAUSE',        _X_NAV + 2.00,   _Y_FN, 1.0, _H_FN),
 
     # Number row ──────────────────────────────────────────────────────────────
     _KeyRect('BACKTICK',  _X_MAIN + 0.00, _Y_NUM, 1.00, _H_ROW),
@@ -201,8 +208,6 @@ _LAYOUT: list[_KeyRect] = [
     _KeyRect('NUM_0',      _X_NP + 0.00, _Y_BOT, 2.0, _H_ROW),
     _KeyRect('NUM_PERIOD', _X_NP + 2.00, _Y_BOT, 1.0, _H_ROW),
 
-    # Logo ────────────────────────────────────────────────────────────────────
-    _KeyRect('LOGO', _X_MAIN + 5.50, _Y_LOGO, 2.0, _H_LOGO),
 ]
 
 # Pre-build pixel rect lookup: name → QRect
@@ -219,7 +224,7 @@ def _build_px_rects() -> dict[str, QRect]:
 _PX_RECTS: dict[str, QRect] = _build_px_rects()
 
 _WIDGET_W = int((_X_NP + 4.0) * _U) + _MARGIN * 2
-_WIDGET_H = int((_Y_LOGO + _H_LOGO + 0.15) * _U) + _MARGIN * 2
+_WIDGET_H = int((_Y_BOT + _H_ROW + 0.15) * _U) + _MARGIN * 2
 
 # ── Key labels ────────────────────────────────────────────────────────────────
 
@@ -242,7 +247,7 @@ _LABELS: dict[str, str] = {
     'NUM_1': '1', 'NUM_2': '2', 'NUM_3': '3', 'NUM_ENTER': 'Ent',
     'NUM_0': '0', 'NUM_PERIOD': '.',
     'MEDIA_PREV': '⏮', 'PLAY_PAUSE': '⏯', 'MEDIA_NEXT': '⏭', 'MUTE': '🔇',
-    'GAME_MODE': 'GM', 'M1': 'M1', 'M2': 'M2', 'M3': 'M3',
+    'GAME_MODE': 'GM', 'M1': 'M1', 'M2': 'M2', 'M3': 'M3', 'MR': 'MR',
     'G1': 'G1', 'G2': 'G2', 'G3': 'G3', 'G4': 'G4', 'G5': 'G5',
     'LOGO': 'LOGO',
 }

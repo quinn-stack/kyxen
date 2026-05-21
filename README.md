@@ -240,21 +240,22 @@ speed = 1.0
 
 ## Developer tools
 
-Several scripts in the repo root are useful when reverse-engineering a new keyboard
+Several scripts in `tools/` are useful when reverse-engineering a new keyboard
 or debugging the HID++ protocol. Stop `kyxen-daemon` before running any of them.
 
 | Script | Purpose |
 |--------|---------|
-| `probe_mkeys.py` | Physical key-press mapper — press each key in turn and it records the HID++ key ID. Used to build `g815_keymap.json`. |
-| `probe_lighting.py` | Lighting protocol validator — tests both confirmed HID++ approaches (GHub/Wireshark and direct-mode) against each hidraw interface, asks you to confirm keys light up correctly. |
-| `probe_gkeys.py` | G-key discovery — enables software mode on the HID++ interface and listens on both hidraw interfaces simultaneously so you can see the raw G-key events. |
-| `probe_rgb_effects2.py` | HID++ feature 0x8071 (RGBEffects) and 0x8081 (PerKeyLightingV2) capability probe. Confirms which autonomous effect features are available and tests batch per-key writes. |
-| `probe_batch_write.py` | Batch per-key write performance test. Validates that 3-key-per-packet batching works and measures packet throughput. |
-| `probe_onboard.py` | Onboard profile sector probe — reads raw profile sectors via feature 0x8100 to understand what the keyboard stores on-device. |
-| `sniff_hidraw.py` | Raw HID++ packet sniffer — dumps everything coming off a hidraw device. Useful for watching what G Hub sends. |
+| `tools/probe_mkeys.py` | Physical key-press mapper — press each key in turn and it records the HID++ key ID. Used to build `g815_keymap.json`. |
+| `tools/probe_lighting.py` | Lighting protocol validator — tests both confirmed HID++ approaches (GHub/Wireshark and direct-mode) against each hidraw interface, asks you to confirm keys light up correctly. |
+| `tools/probe_gkeys.py` | G-key discovery — enables software mode on the HID++ interface and listens on both hidraw interfaces simultaneously so you can see the raw G-key events. |
+| `tools/probe_rgb_effects2.py` | HID++ feature 0x8071 (RGBEffects) and 0x8081 (PerKeyLightingV2) capability probe. Confirms which autonomous effect features are available and tests batch per-key writes. |
+| `tools/probe_batch_write.py` | Batch per-key write performance test. Validates that 3-key-per-packet batching works and measures packet throughput. |
+| `tools/probe_onboard.py` | Onboard profile sector probe — reads raw profile sectors via feature 0x8100 to understand what the keyboard stores on-device. |
+| `tools/sniff_hidraw.py` | Raw HID++ packet sniffer — dumps everything coming off a hidraw device. Useful for watching what G Hub sends. |
+| `tools/parse_pcapng.py` | Wireshark PCAP parser — extracts HID++ packets from `.pcapng` captures for offline analysis. |
 
 `g815_keymap.json` is the ground-truth key ID map for the G815, built from a
-`probe_mkeys.py` session and confirmed correct. It is the canonical source for
+`tools/probe_mkeys.py` session and confirmed correct. It is the canonical source for
 key IDs in `lighting_engine.py`.
 
 ## Adding keyboard support
@@ -266,8 +267,8 @@ key IDs in `lighting_engine.py`.
 5. Register in `src/kyxen_keys/keyboards/__init__.py` `ALL_DRIVERS`
 6. Open a PR
 
-The USB product ID is in `lsusb` output. Use `probe_mkeys.py` to map G-key HID
-codes and `probe_lighting.py` to validate lighting commands on a new model.
+The USB product ID is in `lsusb` output. Use `tools/probe_mkeys.py` to map G-key HID
+codes and `tools/probe_lighting.py` to validate lighting commands on a new model.
 
 ## A Note on AI Assistance
 
