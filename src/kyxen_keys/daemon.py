@@ -6,6 +6,7 @@ other input via uinput passthrough.
 from __future__ import annotations
 import json
 import os
+import queue
 import socket
 import threading
 import time
@@ -36,6 +37,9 @@ class KyxenDaemon:
         self._toggle_held:  dict[str, cfg.MacroAction]    = {}
         # gkey → stop Event for active repeat loops
         self._repeat_stops: dict[str, threading.Event]    = {}
+        # M-key LED control — bitmask updates sent to run_mkey_listener's fd.
+        # Queue carries bitmask values: 0x00=off, 0x01=M1, 0x02=M2, 0x04=M3.
+        self._mkey_led_queue: queue.SimpleQueue | None = None
 
     # ── startup / shutdown ────────────────────────────────────────────────────
 
@@ -71,12 +75,14 @@ class KyxenDaemon:
         if hidraw:
             try:
                 from . import onboard_profiles
-                feat_8010 = onboard_profiles.get_feature_index(hidraw, 0x8010)
-                feat_8020 = onboard_profiles.get_feature_index(hidraw, 0x8020)
+                feat_8010     = onboard_profiles.get_feature_index(hidraw, 0x8010)
+                feat_8020     = onboard_profiles.get_feature_index(hidraw, 0x8020)
+                feat_profiles = onboard_profiles.get_feature_index(hidraw, 0x8100)
+                self._mkey_led_queue = queue.SimpleQueue()
                 threading.Thread(
-                    target=self._mkey_hid_loop, args=(feat_8010, feat_8020), daemon=True
+                    target=self._mkey_hid_loop, args=(feat_8010, feat_8020, feat_profiles), daemon=True
                 ).start()
-                print(f'[kyxen] M-key detection: 0x8010=0x{feat_8010:02x} 0x8020=0x{feat_8020:02x} on {hidraw}')
+                print(f'[kyxen] M-key detection: 0x8010=0x{feat_8010:02x} 0x8020=0x{feat_8020:02x} 0x8100=0x{feat_profiles:02x} on {hidraw}')
             except Exception as e:
                 print(f'[kyxen] WARNING: M-key listener not started: {e}')
 
@@ -87,6 +93,7 @@ class KyxenDaemon:
                 profile.lighting_mode, profile.lighting_colour,
                 self._active_mkey_for(self._active_profile),
             )
+        self._push_mkey_bitmask(self._active_mkey_for(self._active_profile))
         print(f'[kyxen] active profile: {self._active_profile}')
 
         try:
@@ -179,13 +186,15 @@ class KyxenDaemon:
             stop_flag=lambda: not self._running,
         )
 
-    def _mkey_hid_loop(self, feat_8010: int, feat_8020: int) -> None:
+    def _mkey_hid_loop(self, feat_8010: int, feat_8020: int, feat_profiles: int) -> None:
         gkeys_reader.run_mkey_listener(
             hidraw_path=self._keyboard.paths.hidraw,
             feat_8010_idx=feat_8010,
             feat_8020_idx=feat_8020,
+            feat_profiles_idx=feat_profiles,
             on_mkey=self._handle_mkey,
             stop_flag=lambda: not self._running,
+            led_queue=self._mkey_led_queue,
         )
 
     def _handle_mkey(self, mkey_idx: int) -> None:
@@ -270,8 +279,13 @@ class KyxenDaemon:
                 profile.lighting_mode, profile.lighting_colour,
                 self._active_mkey_for(name),
             )
+        self._push_mkey_bitmask(self._active_mkey_for(name))
         print(f'[kyxen] profile → {name}')
         return True
+
+    def _push_mkey_bitmask(self, active_mkey: int | None) -> None:
+        if self._mkey_led_queue is not None:
+            self._mkey_led_queue.put((1 << active_mkey) if active_mkey is not None else 0x00)
 
     def _active_mkey_for(self, profile_name: str) -> int | None:
         """Return 0-based M-key index if profile_name is assigned to an M-key slot, else None."""
