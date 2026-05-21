@@ -121,8 +121,14 @@ def run_mkey_listener(
         return
 
     def _drain(timeout: float) -> None:
+        # Bound by wall-clock time, not silence — lighting ACKs flood the fd
+        # continuously so waiting for silence would loop forever.
+        deadline = _time.monotonic() + timeout
         while True:
-            r, _, _ = select.select([fd], [], [], timeout)
+            remaining = deadline - _time.monotonic()
+            if remaining <= 0:
+                break
+            r, _, _ = select.select([fd], [], [], remaining)
             if not r:
                 break
             os.read(fd, 64)
@@ -134,9 +140,58 @@ def run_mkey_listener(
         # Enable software mode so M-key presses generate 0x8020 notifications.
         os.write(fd, bytes([0x11, 0xff, feat_8010_idx, 0x2e, 0x01]) + b'\x00' * 15)
         _drain(0.4)
+        # Arm 0x8020 notifications — must use param=0x01 regardless of active M-key.
+        # Without this, M-key press reports are only generated when M1 is the active
+        # profile at startup (bitmask=0x01 coincidentally arms notifications via LED path).
+        os.write(fd, bytes([0x11, 0xff, feat_8020_idx, 0x1e, 0x01]) + b'\x00' * 15)
+        _drain(0.3)
+
+        def _drain_and_check() -> None:
+            while True:
+                try:
+                    data = os.read(fd, 64)
+                except BlockingIOError:
+                    return
+                except OSError:
+                    raise
+                if (len(data) >= 5
+                        and data[0] == 0x11
+                        and data[2] == feat_8020_idx
+                        and data[3] == 0x00):
+                    bitmask = data[4]
+                    if bitmask in _MKEY_BITMASK_TO_IDX:
+                        on_mkey(_MKEY_BITMASK_TO_IDX[bitmask])
+
+        current_profile: int = 1  # tracks what profile the keyboard is currently on
+
+        def _set_mkey_led(bitmask: int) -> None:
+            nonlocal current_profile
+            if bitmask == 0x00:
+                return  # param=0x00 disables SW-mode notifications — never send
+            profile_num = _BITMASK_TO_PROFILE_NUM.get(bitmask, 1)
+            if profile_num == current_profile:
+                # Keyboard ignores the LED command unless a profile switch actually
+                # occurred. Force a real transition via an intermediate profile first.
+                intermediate = (profile_num % 3) + 1  # 1→2, 2→3, 3→1
+                os.write(fd, bytes([0x11, 0xff, feat_profiles_idx, 0x1e, intermediate])
+                         + b'\x00' * 15)
+                deadline = _time.monotonic() + 0.02
+                while _time.monotonic() < deadline:
+                    _drain_and_check()
+                    _time.sleep(0.005)
+            os.write(fd, bytes([0x11, 0xff, feat_profiles_idx, 0x1e, profile_num])
+                     + b'\x00' * 15)
+            current_profile = profile_num
+            deadline = _time.monotonic() + 0.05
+            while _time.monotonic() < deadline:
+                _drain_and_check()
+                _time.sleep(0.005)
+            os.write(fd, bytes([0x11, 0xff, feat_8020_idx, 0x1e, bitmask])
+                     + b'\x00' * 15)
+            print(f'[gkeys] M-key LED → bitmask=0x{bitmask:02x} profile={profile_num}')
 
         while not stop_flag():
-            # Drain LED queue — keep only the latest bitmask and apply it.
+            _drain_and_check()
             if led_queue is not None:
                 pending: int | None = None
                 try:
@@ -145,31 +200,7 @@ def run_mkey_listener(
                 except _queue_mod.Empty:
                     pass
                 if pending is not None:
-                    bitmask = pending  # 0x00=off, 0x01=M1, 0x02=M2, 0x04=M3
-                    # Profile activate must precede 0b 1e for the indicator to switch.
-                    # A different profile must be activated to trigger the hardware change;
-                    # the profile number maps directly to the M-key slot (1=M1, 2=M2, 3=M3).
-                    profile_num = _BITMASK_TO_PROFILE_NUM.get(bitmask, 1)
-                    os.write(fd, bytes([0x11, 0xff, feat_profiles_idx, 0x1e, profile_num])
-                             + b'\x00' * 15)
-                    _time.sleep(0.05)
-                    os.write(fd, bytes([0x11, 0xff, feat_8020_idx, 0x1e, bitmask])
-                             + b'\x00' * 15)
-                    print(f'[gkeys] M-key LED → bitmask=0x{bitmask:02x} profile={profile_num}')
-
-            ready, _, _ = select.select([fd], [], [], 0.5)
-            if not ready:
-                continue
-            try:
-                data = os.read(fd, 64)
-            except OSError:
-                break
-            if (len(data) >= 5
-                    and data[0] == 0x11
-                    and data[2] == feat_8020_idx
-                    and data[3] == 0x00):
-                bitmask = data[4]
-                if bitmask in _MKEY_BITMASK_TO_IDX:
-                    on_mkey(_MKEY_BITMASK_TO_IDX[bitmask])
+                    _set_mkey_led(pending)
+            _time.sleep(0.005)
     finally:
         os.close(fd)

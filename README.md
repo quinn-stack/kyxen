@@ -11,7 +11,7 @@ account, no proprietary drivers required.
 
 | Model | G-keys | M-key profile switching | Lighting |
 |-------|--------|------------------------|---------|
-| Logitech G815 | G1–G5 | ✅ M1–M3 | ⚠️ Static colour per profile (per-key RGB capable, effects planned) |
+| Logitech G815 | G1–G5 | ✅ M1–M3 | ✅ Per-key RGB editor — static, presets (breathing/wave/rainbow wave/colour cycle), custom keyframe animations |
 
 More models coming. PRs welcome — see [Adding keyboard support](#adding-keyboard-support).
 
@@ -182,7 +182,60 @@ action = "none"
 
 [lighting]
 mode = "static"
-colour = "#00CC44"
+base_colour = "#00CC44"
+# Optional per-key overrides (static mode):
+# [lighting.keys]
+# A = "#ff0000"
+# SPACE = "#0000ff"
+```
+
+## Lighting
+
+Lighting is configured per profile and applied immediately when the active profile changes. The GUI provides an interactive per-key editor — click the **Lighting…** button on any profile.
+
+### Modes
+
+| Mode | Description |
+|------|-------------|
+| **Static** | All keys lit at `base_colour`. Optional per-key overrides in `[lighting.keys]`. |
+| **Preset** | Built-in animated effects streamed from the daemon. |
+| **Animation** | Custom keyframe animation built in the GUI editor. |
+
+### Preset effects
+
+| Preset | Description |
+|--------|-------------|
+| `breathing` | Pulse brightness up/down. Multiple colours cycle through. |
+| `wave` | Colour washes across the keyboard. Supports `left_right`, `right_left`, `top_bottom`, `bottom_top`. |
+| `rainbow_wave` | Full-spectrum rainbow travels across the keyboard. |
+| `colour_cycle` | All keys cycle through colours in unison. |
+
+All presets have a `speed` parameter (0.1 = slow, 5.0 = fast, default 1.0).
+
+### TOML examples
+
+```toml
+# Breathing preset
+[lighting]
+mode = "preset"
+base_colour = "#00CC44"
+
+[lighting.preset]
+name = "breathing"
+colours = ["#ff0000", "#0000ff"]
+speed = 1.5
+```
+
+```toml
+# Rainbow wave
+[lighting]
+mode = "preset"
+base_colour = "#000000"
+
+[lighting.preset]
+name = "rainbow_wave"
+direction = "left_right"
+speed = 1.0
 ```
 
 ## Developer tools
@@ -195,11 +248,14 @@ or debugging the HID++ protocol. Stop `kyxen-daemon` before running any of them.
 | `probe_mkeys.py` | Physical key-press mapper — press each key in turn and it records the HID++ key ID. Used to build `g815_keymap.json`. |
 | `probe_lighting.py` | Lighting protocol validator — tests both confirmed HID++ approaches (GHub/Wireshark and direct-mode) against each hidraw interface, asks you to confirm keys light up correctly. |
 | `probe_gkeys.py` | G-key discovery — enables software mode on the HID++ interface and listens on both hidraw interfaces simultaneously so you can see the raw G-key events. |
+| `probe_rgb_effects2.py` | HID++ feature 0x8071 (RGBEffects) and 0x8081 (PerKeyLightingV2) capability probe. Confirms which autonomous effect features are available and tests batch per-key writes. |
+| `probe_batch_write.py` | Batch per-key write performance test. Validates that 3-key-per-packet batching works and measures packet throughput. |
+| `probe_onboard.py` | Onboard profile sector probe — reads raw profile sectors via feature 0x8100 to understand what the keyboard stores on-device. |
 | `sniff_hidraw.py` | Raw HID++ packet sniffer — dumps everything coming off a hidraw device. Useful for watching what G Hub sends. |
 
 `g815_keymap.json` is the ground-truth key ID map for the G815, built from a
 `probe_mkeys.py` session and confirmed correct. It is the canonical source for
-key IDs in `lighting.py`.
+key IDs in `lighting_engine.py`.
 
 ## Adding keyboard support
 

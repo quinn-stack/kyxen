@@ -18,6 +18,7 @@ from evdev import UInput, ecodes
 from . import config as cfg
 from . import macro as macro_runner
 from . import gkeys as gkeys_reader
+from .lighting_engine import LightingEngine
 from .keyboards import detect_keyboard, LogitechKeyboard
 
 IPC_SOCKET = Path('/tmp/kyxen.sock')
@@ -40,6 +41,7 @@ class KyxenDaemon:
         # M-key LED control — bitmask updates sent to run_mkey_listener's fd.
         # Queue carries bitmask values: 0x00=off, 0x01=M1, 0x02=M2, 0x04=M3.
         self._mkey_led_queue: queue.SimpleQueue | None = None
+        self._lighting_engine: LightingEngine | None = None
 
     # ── startup / shutdown ────────────────────────────────────────────────────
 
@@ -86,13 +88,14 @@ class KyxenDaemon:
             except Exception as e:
                 print(f'[kyxen] WARNING: M-key listener not started: {e}')
 
-        # Apply startup lighting so keyboard reflects the active profile immediately.
-        if self._keyboard and self._active_profile in self._profiles:
-            profile = self._profiles[self._active_profile]
-            self._keyboard.apply_lighting(
-                profile.lighting_mode, profile.lighting_colour,
-                self._active_mkey_for(self._active_profile),
-            )
+        # Start lighting engine and apply the active profile's lighting config.
+        if hidraw:
+            self._lighting_engine = LightingEngine(hidraw, lambda: not self._running)
+            threading.Thread(target=self._lighting_engine.run, daemon=True).start()
+            if self._active_profile in self._profiles:
+                self._lighting_engine.set_config(
+                    self._profiles[self._active_profile].lighting
+                )
         self._push_mkey_bitmask(self._active_mkey_for(self._active_profile))
         print(f'[kyxen] active profile: {self._active_profile}')
 
@@ -273,12 +276,8 @@ class KyxenDaemon:
             gcfg = cfg.load_global_config()
             gcfg['active_profile'] = name
             cfg.save_global_config(gcfg)
-        if self._keyboard:
-            profile = self._profiles[name]
-            self._keyboard.apply_lighting(
-                profile.lighting_mode, profile.lighting_colour,
-                self._active_mkey_for(name),
-            )
+        if self._lighting_engine is not None:
+            self._lighting_engine.set_config(self._profiles[name].lighting)
         self._push_mkey_bitmask(self._active_mkey_for(name))
         print(f'[kyxen] profile → {name}')
         return True
@@ -297,6 +296,10 @@ class KyxenDaemon:
 
     def reload_config(self) -> None:
         self._load_profiles()
+        if self._lighting_engine is not None and self._active_profile in self._profiles:
+            self._lighting_engine.set_config(
+                self._profiles[self._active_profile].lighting
+            )
         print('[kyxen] config reloaded')
 
     # ── IPC ───────────────────────────────────────────────────────────────────

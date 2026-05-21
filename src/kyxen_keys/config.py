@@ -2,8 +2,11 @@ from __future__ import annotations
 import os
 import pwd
 import tomllib
+import tomli_w
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from .lighting_config import LightingConfig
 
 
 def _real_home() -> Path:
@@ -46,8 +49,7 @@ class Profile:
     tray_colour: str           = '#00CC44'
     trigger_apps: list[str]    = field(default_factory=list)
     macros: dict[str, MacroAction] = field(default_factory=dict)
-    lighting_mode: str         = 'static'
-    lighting_colour: str       = '#00CC44'
+    lighting: LightingConfig   = field(default_factory=LightingConfig)
 
     def __post_init__(self):
         if not self.display_name:
@@ -65,34 +67,15 @@ class Profile:
         for k in G_KEYS:
             d[k] = self.macros[k].to_dict()
         d['triggers'] = {'apps': self.trigger_apps}
-        d['lighting']  = {'mode': self.lighting_mode, 'colour': self.lighting_colour}
+        d['lighting'] = self.lighting.to_dict()
         return d
 
 
 # ── serialisation ─────────────────────────────────────────────────────────────
 
-def _toml_scalar(v) -> str:
-    if isinstance(v, bool):   return 'true' if v else 'false'
-    if isinstance(v, str):
-        esc = v.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n').replace('\r', '\\r').replace('\t', '\\t')
-        return f'"{esc}"'
-    if isinstance(v, list):   return '[' + ', '.join(_toml_scalar(i) for i in v) + ']'
-    return str(v)
-
-
 def _write_toml(path: Path, data: dict) -> None:
-    lines = []
-    deferred = {}
-    for k, v in data.items():
-        if isinstance(v, dict):
-            deferred[k] = v
-        else:
-            lines.append(f'{k} = {_toml_scalar(v)}')
-    for section, inner in deferred.items():
-        lines.append(f'\n[{section}]')
-        for dk, dv in inner.items():
-            lines.append(f'{dk} = {_toml_scalar(dv)}')
-    path.write_text('\n'.join(lines) + '\n', encoding='utf-8')
+    with open(path, 'wb') as f:
+        tomli_w.dump(data, f)
 
 
 # ── profile I/O ───────────────────────────────────────────────────────────────
@@ -119,8 +102,7 @@ def load_profile(path: Path) -> Profile:
         tray_colour=d.get('tray_colour', '#00CC44'),
         trigger_apps=d.get('triggers', {}).get('apps', []),
         macros=macros,
-        lighting_mode=d.get('lighting', {}).get('mode', 'static'),
-        lighting_colour=d.get('lighting', {}).get('colour', '#00CC44'),
+        lighting=LightingConfig.from_dict(d.get('lighting', {})),
     )
 
 

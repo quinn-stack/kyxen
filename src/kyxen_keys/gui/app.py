@@ -553,16 +553,23 @@ class ProfilePanel(QWidget):
         name_row.addWidget(self._name_edit)
         layout.addLayout(name_row)
 
-        # colour
+        # colour + lighting editor button
         colour_row = QHBoxLayout()
         colour_row.addWidget(QLabel('Colour:'))
         self._colour_btn = QPushButton()
         self._colour_btn.setFixedWidth(48)
-        self._set_colour_btn(self._profile.lighting_colour)
+        self._set_colour_btn(self._profile.lighting.base_colour)
         self._colour_btn.clicked.connect(self._pick_colour)
         colour_row.addWidget(self._colour_btn)
         colour_row.addStretch()
         layout.addLayout(colour_row)
+
+        lighting_row = QHBoxLayout()
+        lighting_btn = QPushButton('Lighting…')
+        lighting_btn.clicked.connect(self._open_lighting)
+        lighting_row.addWidget(lighting_btn)
+        lighting_row.addStretch()
+        layout.addLayout(lighting_row)
 
         # g-key buttons
         gkey_group = QGroupBox('G-key macros')
@@ -597,11 +604,20 @@ class ProfilePanel(QWidget):
 
     # ── actions ───────────────────────────────────────────────────────────────
 
+    def _open_lighting(self) -> None:
+        from kyxen_keys.gui.lighting_editor import LightingEditorWindow
+        if not hasattr(self, '_led_win') or self._led_win is None or not self._led_win.isVisible():
+            self._led_win = LightingEditorWindow(self._profile)
+            self._led_win.show()
+        else:
+            self._led_win.raise_()
+            self._led_win.activateWindow()
+
     def _pick_colour(self):
-        c = QColorDialog.getColor(QColor(self._profile.lighting_colour), self, 'Profile colour')
+        c = QColorDialog.getColor(QColor(self._profile.lighting.base_colour), self, 'Profile colour')
         if c.isValid():
-            self._profile.lighting_colour = c.name()
-            self._profile.tray_colour     = c.name()
+            self._profile.lighting.base_colour = c.name()
+            self._profile.tray_colour          = c.name()
             self._set_colour_btn(c.name())
 
     def _set_colour_btn(self, hex_colour: str):
@@ -815,8 +831,7 @@ class MainWindow(QMainWindow):
             display_name=text.strip(),
             tray_colour=src.tray_colour,
             trigger_apps=list(src.trigger_apps),
-            lighting_mode=src.lighting_mode,
-            lighting_colour=src.lighting_colour,
+            lighting=src.lighting,
         )
         for k in cfg.G_KEYS:
             a = src.macros[k]

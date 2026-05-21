@@ -22,6 +22,7 @@ classifiers = [
 dependencies = [
     "evdev>=1.6",
     "PySide6>=6.4",
+    "tomli-w>=1.0",
 ]
 
 [project.scripts]
