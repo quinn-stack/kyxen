@@ -12,6 +12,13 @@ account, no proprietary drivers required.
 | Model | G-keys | M-key profile switching | Lighting |
 |-------|--------|------------------------|---------|
 | Logitech G815 | G1–G5 | ✅ M1–M3 | ✅ Per-key RGB editor — static, presets (breathing/wave/rainbow wave/colour cycle), custom slide animations |
+| Logitech G15 | G1–G18 | ➖ | ➖ amber backlight only |
+
+> **G15 community support:** A working G15 driver exists in the community (requires
+> [g15daemon](https://github.com/backslash-f/g15daemon)). If you're running WoW or
+> other games under Wine/XWayland, see the community guide for the full setup
+> including xdotool-based key injection, which reaches Wine where uinput cannot.
+> G15 support is planned for a future release — contributions welcome.
 
 More models coming. PRs welcome — see [Adding keyboard support](#adding-keyboard-support).
 
