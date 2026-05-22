@@ -119,7 +119,10 @@ class KyxenDaemon:
         if self._mouse_uinput:
             self._mouse_uinput.close()
         if IPC_SOCKET.exists():
-            IPC_SOCKET.unlink()
+            try:
+                IPC_SOCKET.unlink()
+            except PermissionError:
+                pass
         print('[kyxen] stopped')
 
     def _cancel_all_repeats(self) -> None:
@@ -166,13 +169,22 @@ class KyxenDaemon:
 
     def _event_loop(self) -> None:
         suppress = self._keyboard.GKEY_SUPPRESS_CODES
+        evdev_gkeys = self._keyboard.EVDEV_GKEY_MAP
         try:
             for event in self._device.read_loop():
                 if not self._running:
                     break
-                if event.type == ecodes.EV_KEY and event.code in suppress:
-                    # Drop silently — G-key identity comes from HID boot-protocol thread
-                    continue
+                if event.type == ecodes.EV_KEY:
+                    if event.code in evdev_gkeys:
+                        gkey = evdev_gkeys[event.code]
+                        if event.value == 1:
+                            self._handle_gkey(gkey)
+                        elif event.value == 0:
+                            self._handle_gkey_release(gkey)
+                        continue
+                    if event.code in suppress:
+                        # Drop silently — G-key identity comes from HID boot-protocol thread
+                        continue
                 # Forward as-is; original EV_SYN events drive sync — no extra syn() call
                 self._uinput.write_event(event)
         except Exception as e:
@@ -228,6 +240,7 @@ class KyxenDaemon:
         action = profile.macros.get(gkey)
         if not action:
             return
+        print(f"G-key pressed: {gkey} -> {action.action}")
         if action.repeat and action.action not in ('hold_toggle', 'none'):
             stop = threading.Event()
             with self._lock:
@@ -306,7 +319,13 @@ class KyxenDaemon:
 
     def _ipc_loop(self) -> None:
         if IPC_SOCKET.exists():
-            IPC_SOCKET.unlink()
+            try:
+                IPC_SOCKET.unlink()
+            except PermissionError:
+                raise PermissionError(
+                    f'{IPC_SOCKET} exists and is owned by another user. '
+                    'Remove it manually (e.g. sudo rm /tmp/kyxen.sock) and retry.'
+                ) from None
         srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         srv.bind(str(IPC_SOCKET))
         IPC_SOCKET.chmod(0o666)

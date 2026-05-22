@@ -20,7 +20,7 @@ def _real_home() -> Path:
 CONFIG_DIR   = _real_home() / '.config' / 'kyxen'
 PROFILES_DIR = CONFIG_DIR / 'profiles'
 
-G_KEYS = ('g1', 'g2', 'g3', 'g4', 'g5')
+G_KEYS = tuple(f'g{i}' for i in range(1, 19))
 
 
 @dataclass

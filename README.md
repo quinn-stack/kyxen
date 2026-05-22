@@ -11,14 +11,8 @@ account, no proprietary drivers required.
 
 | Model | G-keys | M-key profile switching | Lighting |
 |-------|--------|------------------------|---------|
-| Logitech G815 | G1–G5 | ✅ M1–M3 | ✅ Per-key RGB editor — static, presets (breathing/wave/rainbow wave/colour cycle), custom slide animations |
-| Logitech G15 | G1–G18 | ➖ | ➖ amber backlight only |
-
-> **G15 community support:** A working G15 driver exists in the community (requires
-> [g15daemon](https://github.com/backslash-f/g15daemon)). If you're running WoW or
-> other games under Wine/XWayland, see the community guide for the full setup
-> including xdotool-based key injection, which reaches Wine where uinput cannot.
-> G15 support is planned for a future release — contributions welcome.
+| Logitech G815 | G1–G5 | ✅ M1–M3 | ⚠️ Static colour per profile (per-key RGB capable, effects planned) |
+| Logitech G15 (v1) | G1–G18 | ❌ | ❌ (amber backlight, no software control) |
 
 More models coming. PRs welcome — see [Adding keyboard support](#adding-keyboard-support).
 
@@ -75,33 +69,9 @@ and macros.
 
 ### Auto-start with your session
 
-Kyxen runs as a **systemd user service** — no root, no system-wide unit. One
-command registers and starts it:
-
 ```bash
-kyxen-daemon install-service
+systemctl --user enable --now kyxen
 ```
-
-This writes `~/.config/systemd/user/kyxen.service`, reloads the user manager,
-and runs `systemctl --user enable --now kyxen`. To uninstall:
-
-```bash
-kyxen-daemon uninstall-service
-```
-
-Useful flags: `--no-start` (install + enable without starting now),
-`--no-enable` (install only, don't enable). To inspect the unit before
-installing, run `kyxen-daemon print-service`.
-
-### Show in your app launcher
-
-```bash
-kyxen-daemon install-desktop
-```
-
-Writes `~/.local/share/applications/kyxen.desktop` so Kyxen appears in your
-desktop environment's app launcher. Remove with
-`kyxen-daemon uninstall-desktop`, preview with `kyxen-daemon print-desktop`.
 
 ## Macro types
 
@@ -189,103 +159,24 @@ action = "none"
 
 [lighting]
 mode = "static"
-base_colour = "#00CC44"
-# Optional per-key overrides (static mode):
-# [lighting.keys]
-# A = "#ff0000"
-# SPACE = "#0000ff"
-```
-
-## Lighting
-
-Lighting is configured per profile and applied immediately when the active profile changes. The GUI provides an interactive per-key editor — click the **Lighting…** button on any profile.
-
-### Modes
-
-| Mode | Description |
-|------|-------------|
-| **Static** | All keys lit at `base_colour`. Optional per-key overrides in `[lighting.keys]`. |
-| **Preset** | Built-in animated effects streamed from the daemon. |
-| **Animation** | Custom slide-based animation built in the GUI editor. |
-
-### Preset effects
-
-| Preset | Description |
-|--------|-------------|
-| `breathing` | Pulse brightness up/down. Multiple colours cycle through. |
-| `wave` | Colour washes across the keyboard. Supports `left_right`, `right_left`, `top_bottom`, `bottom_top`. |
-| `rainbow_wave` | Full-spectrum rainbow travels across the keyboard. |
-| `colour_cycle` | All keys cycle through colours in unison. |
-
-All presets have a `speed` parameter (0.1 = slow, 5.0 = fast, default 1.0).
-
-### Animation slides
-
-The animation editor uses a **slide** model: each slide holds a full keyboard state
-plus timing metadata.
-
-| Field | Description |
-|-------|-------------|
-| `hold` | Seconds to hold this slide before transitioning (default 0.5) |
-| `transition` | How to move to the next slide (default `cut`) |
-| `transition_duration` | Seconds for the transition (ignored for `cut`, default 0.5) |
-
-**Transition types:** `cut`, `fade`, `ease`, `hsv`, `wipe_left`, `wipe_right`,
-`wipe_top`, `wipe_bottom`, `blink`.
-
-**Editor workflow:**
-- Build a sequence of slides in the filmstrip at the bottom of the editor.
-- **Add Slide** inherits the previous slide's colours as a starting point. **+ Blank** starts from scratch.
-- Paint keys with the colour panel on the left — select keys first, then pick a colour to fill the selection, or use **Brush** to drag-paint.
-- Use **→ All** next to Hold and Transition to set those values across every slide at once — useful for tuning animation speed without editing each slide individually.
-- **▶ Preview** plays the animation both in the editor widget and live on the keyboard.
-- Animations can be saved to a personal library (`~/.config/kyxen/animations/`) and reused across profiles with **Save to Library** / **Load from Library**.
-
-### TOML examples
-
-```toml
-# Breathing preset
-[lighting]
-mode = "preset"
-base_colour = "#00CC44"
-
-[lighting.preset]
-name = "breathing"
-colours = ["#ff0000", "#0000ff"]
-speed = 1.5
-```
-
-```toml
-# Rainbow wave
-[lighting]
-mode = "preset"
-base_colour = "#000000"
-
-[lighting.preset]
-name = "rainbow_wave"
-direction = "left_right"
-speed = 1.0
+colour = "#00CC44"
 ```
 
 ## Developer tools
 
-Several scripts in `tools/` are useful when reverse-engineering a new keyboard
+Several scripts in the repo root are useful when reverse-engineering a new keyboard
 or debugging the HID++ protocol. Stop `kyxen-daemon` before running any of them.
 
 | Script | Purpose |
 |--------|---------|
-| `tools/probe_mkeys.py` | Physical key-press mapper — press each key in turn and it records the HID++ key ID. Used to build `g815_keymap.json`. |
-| `tools/probe_lighting.py` | Lighting protocol validator — tests both confirmed HID++ approaches (GHub/Wireshark and direct-mode) against each hidraw interface, asks you to confirm keys light up correctly. |
-| `tools/probe_gkeys.py` | G-key discovery — enables software mode on the HID++ interface and listens on both hidraw interfaces simultaneously so you can see the raw G-key events. |
-| `tools/probe_rgb_effects2.py` | HID++ feature 0x8071 (RGBEffects) and 0x8081 (PerKeyLightingV2) capability probe. Confirms which autonomous effect features are available and tests batch per-key writes. |
-| `tools/probe_batch_write.py` | Batch per-key write performance test. Validates that 3-key-per-packet batching works and measures packet throughput. |
-| `tools/probe_onboard.py` | Onboard profile sector probe — reads raw profile sectors via feature 0x8100 to understand what the keyboard stores on-device. |
-| `tools/sniff_hidraw.py` | Raw HID++ packet sniffer — dumps everything coming off a hidraw device. Useful for watching what G Hub sends. |
-| `tools/parse_pcapng.py` | Wireshark PCAP parser — extracts HID++ packets from `.pcapng` captures for offline analysis. |
+| `probe_mkeys.py` | Physical key-press mapper — press each key in turn and it records the HID++ key ID. Used to build `g815_keymap.json`. |
+| `probe_lighting.py` | Lighting protocol validator — tests both confirmed HID++ approaches (GHub/Wireshark and direct-mode) against each hidraw interface, asks you to confirm keys light up correctly. |
+| `probe_gkeys.py` | G-key discovery — enables software mode on the HID++ interface and listens on both hidraw interfaces simultaneously so you can see the raw G-key events. |
+| `sniff_hidraw.py` | Raw HID++ packet sniffer — dumps everything coming off a hidraw device. Useful for watching what G Hub sends. |
 
 `g815_keymap.json` is the ground-truth key ID map for the G815, built from a
-`tools/probe_mkeys.py` session and confirmed correct. It is the canonical source for
-key IDs in `lighting_engine.py`.
+`probe_mkeys.py` session and confirmed correct. It is the canonical source for
+key IDs in `lighting.py`.
 
 ## Adding keyboard support
 
@@ -296,8 +187,8 @@ key IDs in `lighting_engine.py`.
 5. Register in `src/kyxen_keys/keyboards/__init__.py` `ALL_DRIVERS`
 6. Open a PR
 
-The USB product ID is in `lsusb` output. Use `tools/probe_mkeys.py` to map G-key HID
-codes and `tools/probe_lighting.py` to validate lighting commands on a new model.
+The USB product ID is in `lsusb` output. Use `probe_mkeys.py` to map G-key HID
+codes and `probe_lighting.py` to validate lighting commands on a new model.
 
 ## A Note on AI Assistance
 

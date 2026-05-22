@@ -1,5 +1,7 @@
 """Macro execution — type text, run commands, fire key combos, hold-toggle keys."""
 from __future__ import annotations
+import glob
+import os
 import subprocess
 import threading
 import time
@@ -57,6 +59,28 @@ _KEY_NAMES: dict[str, int] = {
     **{f'f{i}': getattr(ecodes, f'KEY_F{i}') for i in range(1, 25)},
 }
 
+# key name → X11 keysym name (for xdotool fallback)
+_XDOTOOL_MAP: dict[str, str] = {
+    'ctrl': 'ctrl', 'lctrl': 'ctrl', 'rctrl': 'ctrl', 'control': 'ctrl',
+    'alt': 'alt', 'lalt': 'alt', 'ralt': 'alt', 'altgr': 'alt',
+    'shift': 'shift', 'lshift': 'shift', 'rshift': 'shift',
+    'super': 'super', 'win': 'super', 'meta': 'super', 'cmd': 'super',
+    'tab': 'Tab', 'enter': 'Return', 'return': 'Return',
+    'esc': 'Escape', 'escape': 'Escape', 'space': 'space',
+    'backspace': 'BackSpace', 'delete': 'Delete', 'del': 'Delete',
+    'insert': 'Insert', 'ins': 'Insert',
+    'capslock': 'Caps_Lock', 'caps_lock': 'Caps_Lock',
+    'menu': 'Menu', 'printscreen': 'Print', 'pause': 'Pause',
+    'home': 'Home', 'end': 'End',
+    'pageup': 'Page_Up', 'pgup': 'Page_Up',
+    'pagedown': 'Page_Down', 'pgdn': 'Page_Down',
+    'up': 'Up', 'down': 'Down', 'left': 'Left', 'right': 'Right',
+    '-': 'minus', '=': 'equal', '[': 'bracketleft', ']': 'bracketright',
+    '\\': 'backslash', ';': 'semicolon', "'": 'apostrophe',
+    ',': 'comma', '.': 'period', '/': 'slash', '`': 'grave',
+    **{f'f{i}': f'F{i}' for i in range(1, 25)},
+}
+
 
 def _resolve_keys(names: list[str]) -> list[int]:
     codes = []
@@ -110,14 +134,35 @@ def _execute(action: MacroAction) -> None:
     elif action.action == 'command' and action.cmd:
         _run_command(action.cmd)
     elif action.action == 'combo' and action.keys:
-        codes = _resolve_keys(action.keys)
-        if codes:
-            _fire_combo(codes)
+        if _uinput is not None:
+            codes = _resolve_keys(action.keys)
+            if codes:
+                _fire_combo(codes)
+        else:
+            _fire_combo_xdotool(action.keys)
     elif action.action == 'mouse_button':
         code = _MOUSE_BTNS.get(action.mouse_btn)
         if code is not None:
             count = 2 if action.mouse_mode == 'double_click' else 1
             _fire_mouse_click(code, count)
+
+
+# ── display detection ────────────────────────────────────────────────────────
+
+def _get_display() -> str:
+    display = os.environ.get('DISPLAY')
+    if display:
+        return display
+    try:
+        out = subprocess.run(['who'], capture_output=True, text=True).stdout
+        for line in out.splitlines():
+            if '(' in line and ')' in line:
+                candidate = line[line.rfind('(') + 1 : line.rfind(')')]
+                if candidate.startswith(':'):
+                    return candidate
+    except Exception:
+        pass
+    return ':0'
 
 
 # ── key sending ───────────────────────────────────────────────────────────────
@@ -136,9 +181,59 @@ def _send_keys(codes: list[int], press: bool) -> None:
 
 
 def _fire_combo(codes: list[int]) -> None:
-    _send_keys(codes, press=True)
-    time.sleep(0.005)
-    _send_keys(codes, press=False)
+    # Build reverse map: evdev keycode → canonical name (first entry wins)
+    code_to_name: dict[int, str] = {}
+    for name, code in _KEY_NAMES.items():
+        code_to_name.setdefault(code, name)
+
+    xnames = []
+    for code in codes:
+        name = code_to_name.get(code)
+        if name and name in _XDOTOOL_MAP:
+            xnames.append(_XDOTOOL_MAP[name])
+        elif name and len(name) == 1:
+            xnames.append(name)
+        else:
+            # fall back to evdev constant (e.g. KEY_A → 'a', KEY_5 → '5')
+            evdev_name = ecodes.KEY.get(code, '')
+            if evdev_name.startswith('KEY_') and len(evdev_name) == 5:
+                xnames.append(evdev_name[4].lower())
+            else:
+                print(f'[macro] unknown xdotool mapping for evdev code: {code}')
+
+    if not xnames:
+        return
+    key_str = '+'.join(xnames)
+    print(f'[macro] firing combo via xdotool: {key_str}')
+    subprocess.run(
+        ['xdotool', 'key', '--clearmodifiers', key_str],
+        env={**os.environ, 'DISPLAY': _get_display(), 'XAUTHORITY': glob.glob('/run/user/1000/xauth_*')[0]},
+        check=False,
+    )
+
+
+def _fire_combo_xdotool(names: list[str]) -> None:
+    xnames = []
+    for name in names:
+        n = name.lower().strip()
+        if n in _XDOTOOL_MAP:
+            xnames.append(_XDOTOOL_MAP[n])
+        elif len(n) == 1 and (n.isalpha() or n.isdigit()):
+            xnames.append(n)
+        else:
+            print(f'[macro] unknown xdotool key name: {name!r}')
+    if not xnames:
+        return
+    chord = '+'.join(xnames)
+    print(f'[macro] firing combo via xdotool: {chord}')
+    try:
+        subprocess.run(
+            ['xdotool', 'key', chord],
+            env={**os.environ, 'DISPLAY': _get_display()},
+            check=False,
+        )
+    except FileNotFoundError:
+        print('[macro] xdotool not found')
 
 
 def _send_mouse_btn(code: int, press: bool) -> None:
