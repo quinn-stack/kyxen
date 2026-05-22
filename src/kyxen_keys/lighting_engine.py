@@ -6,7 +6,7 @@ Config updates arrive via a SimpleQueue; the engine ticks at ~20fps.
 
   Static:    writes once on config change, idles until next change.
   Preset:    ticks at 20fps, computes frame from elapsed time + formula.
-  Animation: ticks at 20fps, interpolates between keyframes.
+  Animation: ticks at 20fps, interpolates between slides.
 """
 from __future__ import annotations
 import colorsys
@@ -17,7 +17,7 @@ import select
 import time
 from collections.abc import Callable
 
-from .lighting_config import LightingConfig, Keyframe
+from .lighting_config import LightingConfig, Slide
 from .lighting import KEY_IDS
 from .keyboard_layout import LAYOUT as _LAYOUT
 
@@ -218,56 +218,97 @@ def _build_colour_cycle(config: LightingConfig, t: float) -> dict[str, tuple[int
     return {k: c for k in KEY_IDS}
 
 
-def _resolve_keyframe_state(
-    keyframes: list[Keyframe],
-    idx: int,
+def _build_slide_state(
+    slide: Slide,
     base: dict[str, tuple[int, int, int]],
 ) -> dict[str, tuple[int, int, int]]:
-    """Full per-key state at keyframe[idx] by merging overrides from frame 0 → idx."""
     state = dict(base)
-    for i in range(idx + 1):
-        for key_name, hex_col in keyframes[i].key_colours.items():
-            if key_name in KEY_IDS:
-                state[key_name] = _hex_to_rgb(hex_col)
+    for key_name, hex_col in slide.key_colours.items():
+        if key_name in KEY_IDS:
+            state[key_name] = _hex_to_rgb(hex_col)
     return state
+
+
+def _transition_frame(
+    state_a: dict[str, tuple[int, int, int]],
+    state_b: dict[str, tuple[int, int, int]],
+    frac: float,
+    transition: str,
+) -> dict[str, tuple[int, int, int]]:
+    if transition == 'cut':
+        return state_b if frac >= 1.0 else state_a
+
+    if transition in ('fade', 'ease', 'hsv'):
+        mode = 'ease' if transition == 'ease' else 'hsv' if transition == 'hsv' else 'linear'
+        return {k: _interp_rgb(state_a[k], state_b[k], frac, mode) for k in KEY_IDS}
+
+    if transition in ('wipe_left', 'wipe_right', 'wipe_top', 'wipe_bottom'):
+        direction_map = {
+            'wipe_left':   'left_right',
+            'wipe_right':  'right_left',
+            'wipe_top':    'top_bottom',
+            'wipe_bottom': 'bottom_top',
+        }
+        frame: dict[str, tuple[int, int, int]] = {}
+        for key in KEY_IDS:
+            coord = _coord_for_key(key, direction_map[transition])
+            frame[key] = state_b[key] if coord <= frac else state_a[key]
+        return frame
+
+    if transition == 'blink':
+        black = (0, 0, 0)
+        if frac < 0.5:
+            t2 = frac * 2
+            return {k: _interp_rgb(state_a[k], black, t2, 'linear') for k in KEY_IDS}
+        else:
+            t2 = (frac - 0.5) * 2
+            return {k: _interp_rgb(black, state_b[k], t2, 'linear') for k in KEY_IDS}
+
+    # Fallback
+    return {k: _interp_rgb(state_a[k], state_b[k], frac, 'linear') for k in KEY_IDS}
 
 
 def _build_animation(config: LightingConfig, t: float) -> dict[str, tuple[int, int, int]]:
     anim = config.animation  # type: ignore[union-attr]
-    if not anim.keyframes:
+    if not anim or not anim.slides:
         return _build_static(config)
 
-    duration = max(anim.duration, anim.keyframes[-1].time if anim.keyframes else 1.0)
+    slides = anim.slides
+    base   = _base_frame(config)
+
+    # Each slide occupies: hold_duration + transition_duration (0 for 'cut')
+    phase_durations = [
+        s.hold_duration + (0.0 if s.transition == 'cut' else s.transition_duration)
+        for s in slides
+    ]
+    total = sum(phase_durations)
+    if total <= 0:
+        return _build_slide_state(slides[0], base)
+
     if anim.loop:
-        t = t % duration
+        t = t % total
     else:
-        t = min(t, duration)
+        t = min(t, total)
 
-    keyframes = anim.keyframes
-    base = _base_frame(config)
+    elapsed = 0.0
+    for i, slide in enumerate(slides):
+        hold_end  = elapsed + slide.hold_duration
+        trans_dur = 0.0 if slide.transition == 'cut' else slide.transition_duration
+        phase_end = hold_end + trans_dur
 
-    # Before first keyframe
-    if t <= keyframes[0].time:
-        return _resolve_keyframe_state(keyframes, 0, base)
+        if t < hold_end:
+            return _build_slide_state(slide, base)
 
-    # After last keyframe
-    if t >= keyframes[-1].time:
-        return _resolve_keyframe_state(keyframes, len(keyframes) - 1, base)
+        if t < phase_end:
+            frac    = (t - hold_end) / trans_dur if trans_dur > 0 else 1.0
+            next_i  = (i + 1) % len(slides)
+            state_a = _build_slide_state(slide, base)
+            state_b = _build_slide_state(slides[next_i], base)
+            return _transition_frame(state_a, state_b, frac, slide.transition)
 
-    # Find surrounding keyframes
-    for i in range(len(keyframes) - 1):
-        kf_a, kf_b = keyframes[i], keyframes[i + 1]
-        if kf_a.time <= t <= kf_b.time:
-            span = kf_b.time - kf_a.time
-            frac = (t - kf_a.time) / span if span > 0 else 1.0
-            state_a = _resolve_keyframe_state(keyframes, i,     base)
-            state_b = _resolve_keyframe_state(keyframes, i + 1, base)
-            return {
-                k: _interp_rgb(state_a[k], state_b[k], frac, kf_a.transition)
-                for k in KEY_IDS
-            }
+        elapsed = phase_end
 
-    return _resolve_keyframe_state(keyframes, len(keyframes) - 1, base)
+    return _build_slide_state(slides[-1], base)
 
 
 # ── Engine ────────────────────────────────────────────────────────────────────

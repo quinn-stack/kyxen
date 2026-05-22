@@ -21,61 +21,62 @@ TOML structure inside a profile file:
     direction = "left_right"
 
     [lighting.animation]     # present when mode = "animation"
-    duration = 4.0
     loop = true
 
-    [[lighting.animation.keyframes]]
-    time = 0.0
-    transition = "linear"
-    keys = {A = "#ff0000", SPACE = "#ffffff"}
-
-Backwards compatible: old profiles with [lighting] mode/colour keys load fine.
+    [[lighting.animation.slides]]
+    hold = 1.0
+    transition = "cut"
+    transition_duration = 0.5
+    [lighting.animation.slides.keys]
+    A = "#ff0000"
+    SPACE = "#ffffff"
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
 
 
 @dataclass
-class Keyframe:
-    time: float
+class Slide:
+    """A single animation slide — full keyboard state plus hold/transition metadata."""
     key_colours: dict[str, str] = field(default_factory=dict)
-    transition: str = 'linear'  # 'instant' | 'linear' | 'ease' | 'hsv'
+    hold_duration: float = 0.5
+    transition: str = 'cut'             # 'cut'|'fade'|'ease'|'hsv'|'wipe_left'|'wipe_right'|'wipe_top'|'wipe_bottom'|'blink'
+    transition_duration: float = 0.5   # ignored for 'cut'
 
     def to_dict(self) -> dict:
         return {
-            'time':       self.time,
-            'keys':       dict(self.key_colours),
-            'transition': self.transition,
+            'keys':                dict(self.key_colours),
+            'hold':                self.hold_duration,
+            'transition':          self.transition,
+            'transition_duration': self.transition_duration,
         }
 
     @classmethod
-    def from_dict(cls, d: dict) -> 'Keyframe':
+    def from_dict(cls, d: dict) -> 'Slide':
         return cls(
-            time=float(d.get('time', 0.0)),
             key_colours=dict(d.get('keys', {})),
-            transition=str(d.get('transition', 'linear')),
+            hold_duration=float(d.get('hold', 1.0)),
+            transition=str(d.get('transition', 'cut')),
+            transition_duration=float(d.get('transition_duration', 0.5)),
         )
 
 
 @dataclass
 class AnimationConfig:
-    duration: float = 2.0
     loop: bool = True
-    keyframes: list[Keyframe] = field(default_factory=list)
+    slides: list[Slide] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
-            'duration':  self.duration,
-            'loop':      self.loop,
-            'keyframes': [kf.to_dict() for kf in self.keyframes],
+            'loop':   self.loop,
+            'slides': [s.to_dict() for s in self.slides],
         }
 
     @classmethod
     def from_dict(cls, d: dict) -> 'AnimationConfig':
         return cls(
-            duration=float(d.get('duration', 2.0)),
             loop=bool(d.get('loop', True)),
-            keyframes=[Keyframe.from_dict(kf) for kf in d.get('keyframes', [])],
+            slides=[Slide.from_dict(s) for s in d.get('slides', [])],
         )
 
 

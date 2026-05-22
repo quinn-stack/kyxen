@@ -11,7 +11,7 @@ account, no proprietary drivers required.
 
 | Model | G-keys | M-key profile switching | Lighting |
 |-------|--------|------------------------|---------|
-| Logitech G815 | G1–G5 | ✅ M1–M3 | ✅ Per-key RGB editor — static, presets (breathing/wave/rainbow wave/colour cycle), custom keyframe animations |
+| Logitech G815 | G1–G5 | ✅ M1–M3 | ✅ Per-key RGB editor — static, presets (breathing/wave/rainbow wave/colour cycle), custom slide animations |
 
 More models coming. PRs welcome — see [Adding keyboard support](#adding-keyboard-support).
 
@@ -199,7 +199,7 @@ Lighting is configured per profile and applied immediately when the active profi
 |------|-------------|
 | **Static** | All keys lit at `base_colour`. Optional per-key overrides in `[lighting.keys]`. |
 | **Preset** | Built-in animated effects streamed from the daemon. |
-| **Animation** | Custom keyframe animation built in the GUI editor. |
+| **Animation** | Custom slide-based animation built in the GUI editor. |
 
 ### Preset effects
 
@@ -211,6 +211,28 @@ Lighting is configured per profile and applied immediately when the active profi
 | `colour_cycle` | All keys cycle through colours in unison. |
 
 All presets have a `speed` parameter (0.1 = slow, 5.0 = fast, default 1.0).
+
+### Animation slides
+
+The animation editor uses a **slide** model: each slide holds a full keyboard state
+plus timing metadata.
+
+| Field | Description |
+|-------|-------------|
+| `hold` | Seconds to hold this slide before transitioning (default 0.5) |
+| `transition` | How to move to the next slide (default `cut`) |
+| `transition_duration` | Seconds for the transition (ignored for `cut`, default 0.5) |
+
+**Transition types:** `cut`, `fade`, `ease`, `hsv`, `wipe_left`, `wipe_right`,
+`wipe_top`, `wipe_bottom`, `blink`.
+
+**Editor workflow:**
+- Build a sequence of slides in the filmstrip at the bottom of the editor.
+- **Add Slide** inherits the previous slide's colours as a starting point. **+ Blank** starts from scratch.
+- Paint keys with the colour panel on the left — select keys first, then pick a colour to fill the selection, or use **Brush** to drag-paint.
+- Use **→ All** next to Hold and Transition to set those values across every slide at once — useful for tuning animation speed without editing each slide individually.
+- **▶ Preview** plays the animation both in the editor widget and live on the keyboard.
+- Animations can be saved to a personal library (`~/.config/kyxen/animations/`) and reused across profiles with **Save to Library** / **Load from Library**.
 
 ### TOML examples
 

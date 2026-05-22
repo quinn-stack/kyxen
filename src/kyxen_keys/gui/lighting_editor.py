@@ -5,20 +5,22 @@ import copy
 import math
 import time as _time
 
-from PySide6.QtCore   import Qt, QTimer, Signal
-from PySide6.QtGui    import QColor
+from PySide6.QtCore    import Qt, QTimer, Signal
+from PySide6.QtGui     import QColor
 from PySide6.QtWidgets import (
-    QCheckBox, QColorDialog, QComboBox, QDoubleSpinBox, QFormLayout,
-    QFrame, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMainWindow,
-    QPushButton, QScrollArea, QSlider, QTabBar, QVBoxLayout, QWidget,
+    QCheckBox, QColorDialog, QComboBox, QDialog, QDialogButtonBox,
+    QDoubleSpinBox, QFormLayout, QFrame, QGroupBox, QHBoxLayout,
+    QInputDialog, QLabel, QLineEdit, QListWidget, QListWidgetItem,
+    QMainWindow, QMessageBox, QPushButton, QScrollArea, QSlider,
+    QTabBar, QVBoxLayout, QWidget,
 )
 
 from kyxen_keys import config as cfg
-from kyxen_keys.lighting_config import AnimationConfig, Keyframe, LightingConfig, PresetConfig
+from kyxen_keys.lighting_config import AnimationConfig, LightingConfig, PresetConfig, Slide
 from kyxen_keys.gui.lighting_keyboard_widget import (
     LightingKeyboardWidget, _LAYOUT, _PX_RECTS,
 )
-from kyxen_keys.gui.timeline_widget import TimelineWidget
+from kyxen_keys.gui.filmstrip_widget import FilmstripWidget
 
 _ALL_KEYS = list(_PX_RECTS.keys())
 
@@ -36,6 +38,31 @@ _DIRECTIONS = [
     ('Radial',       'radial'),
 ]
 _PRESET_COLOUR_N = {'breathing': 1, 'wave': 1, 'rainbow_wave': 0, 'colour_cycle': 4}
+
+_TRANSITIONS = [
+    ('Cut',     'cut'),
+    ('Fade',    'fade'),
+    ('Ease',    'ease'),
+    ('HSV',     'hsv'),
+    ('Wipe →',  'wipe_left'),
+    ('Wipe ←',  'wipe_right'),
+    ('Wipe ↓',  'wipe_top'),
+    ('Wipe ↑',  'wipe_bottom'),
+    ('Blink',   'blink'),
+]
+
+_ANIM_DIR = cfg.CONFIG_DIR / 'animations'
+
+# Common colour palette — shown as static swatches in the colour panel.
+# Each inner list is one row of 8 swatches.
+_COMMON_COLOURS: list[list[str]] = [
+    # Spectrum
+    ['#ff0000', '#ff6600', '#ffcc00', '#00ff00', '#00ffcc', '#0066ff', '#cc00ff', '#ff00aa'],
+    # Softer / useful LED tones
+    ['#ff4444', '#ff9933', '#ffff00', '#44ff44', '#44ffff', '#4488ff', '#aa44ff', '#ff44cc'],
+    # Whites, greys, black
+    ['#ffffff', '#cccccc', '#888888', '#444444', '#222222', '#000000', '#ff8800', '#00cc44'],
+]
 
 
 # ── Colour panel ──────────────────────────────────────────────────────────────
@@ -107,6 +134,28 @@ class ColourPanel(QWidget):
         self._recent_row.setSpacing(2)
         layout.addWidget(self._recent_widget)
 
+        layout.addWidget(QLabel('Common:'))
+        common_grid = QWidget()
+        common_layout = QVBoxLayout(common_grid)
+        common_layout.setContentsMargins(0, 0, 0, 0)
+        common_layout.setSpacing(2)
+        for row_colours in _COMMON_COLOURS:
+            row_w = QWidget()
+            row_l = QHBoxLayout(row_w)
+            row_l.setContentsMargins(0, 0, 0, 0)
+            row_l.setSpacing(2)
+            for hex_c in row_colours:
+                col = QColor(hex_c)
+                btn = QPushButton()
+                btn.setFixedSize(20, 20)
+                btn.setToolTip(hex_c)
+                btn.setStyleSheet(f'background-color:{hex_c};border:1px solid #555;')
+                btn.clicked.connect(lambda _, x=col: self.set_colour(x, emit=True))
+                row_l.addWidget(btn)
+            row_l.addStretch()
+            common_layout.addWidget(row_w)
+        layout.addWidget(common_grid)
+
         layout.addStretch()
         self._sync_ui()
 
@@ -151,7 +200,8 @@ class ColourPanel(QWidget):
 
     def _push_recent(self, c: QColor) -> None:
         name = c.name()
-        self._recent = [x for x in self._recent if x.name() != name]
+        if any(x.name() == name for x in self._recent):
+            return   # already present — don't reorder
         self._recent.insert(0, QColor(c))
         self._recent = self._recent[:12]
         self._rebuild_recent()
@@ -184,15 +234,19 @@ class LightingEditorWindow(QMainWindow):
         self._profile     = profile
         self._config      = copy.deepcopy(profile.lighting)
         self._tool        = 'select'
-        self._anim_kf_sel = -1
+        self._slide_sel   = -1
 
         self._apply_timer = QTimer(self)
         self._apply_timer.setSingleShot(True)
         self._apply_timer.setInterval(400)
         self._apply_timer.timeout.connect(self._do_auto_apply)
 
+        self._preview_timer:          QTimer | None          = None
+        self._preview_t0              = 0.0
+        self._pre_preview_lighting:   LightingConfig | None = None
+
         self.setWindowTitle(f'Lighting — {profile.display_name}')
-        self.setMinimumSize(1100, 680)
+        self.setMinimumSize(1100, 720)
         self._build_ui()
         self._load_config()
 
@@ -277,7 +331,7 @@ class LightingEditorWindow(QMainWindow):
             ('select',     'Select',     True,  'Click / rubber-band to select keys'),
             ('brush',      'Brush',      True,  'Click-drag to paint keys'),
             (None,         None,         False, None),
-            ('fill_all',   'Fill All',   False, 'Fill all keys with the current colour'),
+            ('fill_sel',   'Fill',       False, 'Fill selected keys (or all) with current colour'),
             ('gradient',   'Gradient',   False, 'Paint a gradient across the selection (or all keys)'),
             ('eyedropper', 'Eyedropper', True,  'Click a key to pick its colour'),
         ]
@@ -357,60 +411,133 @@ class LightingEditorWindow(QMainWindow):
         layout.setContentsMargins(0, 4, 0, 0)
         layout.setSpacing(4)
 
-        # Controls row
-        ctrl = QHBoxLayout()
-        ctrl.setSpacing(8)
-
-        ctrl.addWidget(QLabel('Duration:'))
-        self._dur_spin = QDoubleSpinBox()
-        self._dur_spin.setRange(0.1, 60.0)
-        self._dur_spin.setSingleStep(0.5)
-        self._dur_spin.setSuffix(' s')
-        self._dur_spin.setValue(2.0)
-        self._dur_spin.valueChanged.connect(self._on_anim_duration)
-        ctrl.addWidget(self._dur_spin)
+        # ── Top controls row ──────────────────────────────────────────────────
+        top = QHBoxLayout()
+        top.setSpacing(8)
 
         self._loop_chk = QCheckBox('Loop')
         self._loop_chk.setChecked(True)
         self._loop_chk.toggled.connect(self._on_anim_loop)
-        ctrl.addWidget(self._loop_chk)
+        top.addWidget(self._loop_chk)
 
-        sep = QFrame()
-        sep.setFrameShape(QFrame.Shape.VLine)
-        sep.setFrameShadow(QFrame.Shadow.Sunken)
-        ctrl.addWidget(sep)
+        top.addStretch()
 
-        self._btn_add_kf = QPushButton('+ Keyframe')
-        self._btn_add_kf.setToolTip('Add keyframe at playhead position')
-        self._btn_add_kf.clicked.connect(self._on_kf_add_btn)
-        ctrl.addWidget(self._btn_add_kf)
+        self._btn_preview = QPushButton('▶  Preview')
+        self._btn_preview.setCheckable(True)
+        self._btn_preview.setFixedWidth(100)
+        self._btn_preview.toggled.connect(self._on_preview_toggled)
+        top.addWidget(self._btn_preview)
 
-        self._btn_del_kf = QPushButton('Delete')
-        self._btn_del_kf.setEnabled(False)
-        self._btn_del_kf.clicked.connect(self._on_kf_del_btn)
-        ctrl.addWidget(self._btn_del_kf)
+        sep = QFrame(); sep.setFrameShape(QFrame.Shape.VLine); sep.setFrameShadow(QFrame.Shadow.Sunken)
+        top.addWidget(sep)
 
-        ctrl.addWidget(QLabel('Transition:'))
-        self._trans_combo = QComboBox()
-        for label, val in (('Linear', 'linear'), ('Ease', 'ease'),
-                            ('HSV hue', 'hsv'), ('Instant', 'instant')):
-            self._trans_combo.addItem(label, val)
-        self._trans_combo.setEnabled(False)
-        self._trans_combo.currentIndexChanged.connect(self._on_kf_transition)
-        ctrl.addWidget(self._trans_combo)
+        self._btn_anim_save = QPushButton('Save to Library…')
+        self._btn_anim_save.clicked.connect(self._on_anim_save_library)
+        top.addWidget(self._btn_anim_save)
 
-        ctrl.addStretch()
-        layout.addLayout(ctrl)
+        self._btn_anim_load = QPushButton('Load from Library…')
+        self._btn_anim_load.clicked.connect(self._on_anim_load_library)
+        top.addWidget(self._btn_anim_load)
 
-        # Timeline
-        self._timeline = TimelineWidget()
-        self._timeline.keyframe_selected.connect(self._on_kf_selected)
-        self._timeline.keyframe_add_requested.connect(self._on_kf_add)
-        self._timeline.keyframe_delete_requested.connect(self._on_kf_del)
-        self._timeline.keyframe_moved.connect(self._on_kf_moved)
-        self._timeline.transition_changed.connect(self._on_kf_trans_ext)
-        self._timeline.playhead_changed.connect(self._on_playhead_scrub)
-        layout.addWidget(self._timeline)
+        layout.addLayout(top)
+
+        # ── Slide property controls ───────────────────────────────────────────
+        slide_row = QHBoxLayout()
+        slide_row.setSpacing(6)
+
+        self._btn_add_slide = QPushButton('+ Add Slide')
+        self._btn_add_slide.setFixedWidth(100)
+        self._btn_add_slide.clicked.connect(self._on_add_slide_btn)
+        slide_row.addWidget(self._btn_add_slide)
+
+        self._btn_blank_slide = QPushButton('+ Blank')
+        self._btn_blank_slide.setFixedWidth(70)
+        self._btn_blank_slide.setToolTip('Add a new blank slide (no inherited colours)')
+        self._btn_blank_slide.clicked.connect(self._on_blank_slide_btn)
+        slide_row.addWidget(self._btn_blank_slide)
+
+        self._btn_del_slide = QPushButton('Delete')
+        self._btn_del_slide.setFixedWidth(70)
+        self._btn_del_slide.setEnabled(False)
+        self._btn_del_slide.clicked.connect(self._on_del_slide_btn)
+        slide_row.addWidget(self._btn_del_slide)
+
+        slide_row.addSpacing(12)
+
+        sep2 = QFrame(); sep2.setFrameShape(QFrame.Shape.VLine); sep2.setFrameShadow(QFrame.Shadow.Sunken)
+        slide_row.addWidget(sep2)
+
+        slide_row.addWidget(QLabel('Hold:'))
+        self._slide_hold = QDoubleSpinBox()
+        self._slide_hold.setRange(0.05, 60.0)
+        self._slide_hold.setSingleStep(0.1)
+        self._slide_hold.setSuffix(' s')
+        self._slide_hold.setValue(0.5)
+        self._slide_hold.setEnabled(False)
+        self._slide_hold.valueChanged.connect(self._on_slide_hold)
+        slide_row.addWidget(self._slide_hold)
+
+        self._btn_hold_all = QPushButton('→ All')
+        self._btn_hold_all.setFixedWidth(46)
+        self._btn_hold_all.setToolTip('Apply this hold duration to every slide')
+        self._btn_hold_all.setEnabled(False)
+        self._btn_hold_all.clicked.connect(self._on_hold_all)
+        slide_row.addWidget(self._btn_hold_all)
+
+        slide_row.addSpacing(8)
+
+        slide_row.addWidget(QLabel('Transition:'))
+        self._slide_trans = QComboBox()
+        for label, val in _TRANSITIONS:
+            self._slide_trans.addItem(label, val)
+        self._slide_trans.setEnabled(False)
+        self._slide_trans.currentIndexChanged.connect(self._on_slide_trans)
+        slide_row.addWidget(self._slide_trans)
+
+        self._btn_trans_all = QPushButton('→ All')
+        self._btn_trans_all.setFixedWidth(46)
+        self._btn_trans_all.setToolTip('Apply this transition type to every slide')
+        self._btn_trans_all.setEnabled(False)
+        self._btn_trans_all.clicked.connect(self._on_trans_all)
+        slide_row.addWidget(self._btn_trans_all)
+
+        slide_row.addSpacing(4)
+
+        self._trans_dur_lbl = QLabel('Duration:')
+        slide_row.addWidget(self._trans_dur_lbl)
+        self._slide_trans_dur = QDoubleSpinBox()
+        self._slide_trans_dur.setRange(0.05, 10.0)
+        self._slide_trans_dur.setSingleStep(0.1)
+        self._slide_trans_dur.setSuffix(' s')
+        self._slide_trans_dur.setValue(0.5)
+        self._slide_trans_dur.setEnabled(False)
+        self._slide_trans_dur.valueChanged.connect(self._on_slide_trans_dur)
+        slide_row.addWidget(self._slide_trans_dur)
+
+        self._btn_trans_dur_all = QPushButton('→ All')
+        self._btn_trans_dur_all.setFixedWidth(46)
+        self._btn_trans_dur_all.setToolTip('Apply this transition duration to every slide')
+        self._btn_trans_dur_all.setEnabled(False)
+        self._btn_trans_dur_all.clicked.connect(self._on_trans_dur_all)
+        slide_row.addWidget(self._btn_trans_dur_all)
+
+        slide_row.addStretch()
+        layout.addLayout(slide_row)
+
+        # ── Filmstrip ─────────────────────────────────────────────────────────
+        self._filmstrip = FilmstripWidget()
+        self._filmstrip.slide_selected.connect(self._on_slide_selected)
+        self._filmstrip.slide_add_after.connect(self._on_slide_add_after)
+        self._filmstrip.slide_delete.connect(self._on_slide_delete)
+
+        fs_scroll = QScrollArea()
+        fs_scroll.setWidget(self._filmstrip)
+        fs_scroll.setWidgetResizable(False)
+        fs_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        fs_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        fs_scroll.setFixedHeight(self._filmstrip.height() + 20)
+        fs_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        layout.addWidget(fs_scroll)
 
         return panel
 
@@ -419,11 +546,11 @@ class LightingEditorWindow(QMainWindow):
     def _load_config(self) -> None:
         mode_idx = {'static': 0, 'preset': 1, 'animation': 2}.get(self._config.mode, 0)
 
-        # Preset panel (suppress signals during load)
+        # Preset panel
         pc = self._config.preset or PresetConfig()
         for widget, val in (
-            (self._preset_name,  pc.name),
-            (self._dir_combo,    pc.direction),
+            (self._preset_name, pc.name),
+            (self._dir_combo,   pc.direction),
         ):
             widget.blockSignals(True)
             idx = widget.findData(val)
@@ -440,18 +567,16 @@ class LightingEditorWindow(QMainWindow):
         self._refresh_pc_visibility()
 
         # Animation panel
-        anim = self._config.animation or AnimationConfig()
-        self._dur_spin.blockSignals(True)
-        self._dur_spin.setValue(anim.duration)
-        self._dur_spin.blockSignals(False)
+        anim = self._ensure_anim()
         self._loop_chk.setChecked(anim.loop)
-        kfs = anim.keyframes if anim.keyframes else [Keyframe(time=0.0)]
-        self._timeline.set_animation(anim.duration, kfs)
-        self._anim_kf_sel = 0 if kfs else -1
-        self._timeline.set_selected(self._anim_kf_sel)
-        self._update_anim_controls()
+        slides = anim.slides
+        self._slide_sel = 0 if slides else -1
+        self._refresh_filmstrip()
+        self._update_slide_controls()
+        if self._slide_sel >= 0:
+            self._refresh_kbd_for_slide(self._slide_sel)
 
-        # Mode tab (no signal — call handler directly)
+        # Mode tab
         self._tabs.blockSignals(True)
         self._tabs.setCurrentIndex(mode_idx)
         self._tabs.blockSignals(False)
@@ -472,25 +597,65 @@ class LightingEditorWindow(QMainWindow):
                 inherited.add(key)
         self._kbd.set_colours(colours, inherited)
 
-    def _refresh_kbd_for_kf(self, kf_idx: int) -> None:
-        """Show accumulated key colours through keyframe kf_idx."""
-        anim = self._config.animation
-        if not anim or not anim.keyframes or kf_idx < 0:
+    def _refresh_kbd_for_slide(self, idx: int) -> None:
+        slides = self._get_slides()
+        if not slides or idx < 0 or idx >= len(slides):
             self._refresh_kbd()
             return
-        resolved: dict[str, str] = {}
-        for i in range(min(kf_idx + 1, len(anim.keyframes))):
-            resolved.update(anim.keyframes[i].key_colours)
-        base = QColor(self._config.base_colour)
+        slide = slides[idx]
+        base  = QColor(self._config.base_colour)
         colours:   dict[str, QColor] = {}
         inherited: set[str] = set()
         for key in _ALL_KEYS:
-            if key in resolved:
-                colours[key] = QColor(resolved[key])
+            if key in slide.key_colours:
+                colours[key] = QColor(slide.key_colours[key])
             else:
                 colours[key] = base
                 inherited.add(key)
         self._kbd.set_colours(colours, inherited)
+
+    def _refresh_filmstrip(self) -> None:
+        slides = self._get_slides()
+        self._filmstrip.set_slides(
+            [s.key_colours for s in slides],
+            self._config.base_colour,
+            self._slide_sel,
+        )
+
+    def _update_slide_controls(self) -> None:
+        slides = self._get_slides()
+        has    = self._slide_sel >= 0 and self._slide_sel < len(slides)
+
+        self._btn_del_slide.setEnabled(has and len(slides) > 1)
+        any_slides = len(slides) > 0
+        self._slide_hold.setEnabled(has)
+        self._btn_hold_all.setEnabled(any_slides)
+        self._btn_trans_all.setEnabled(any_slides)
+        self._btn_trans_dur_all.setEnabled(any_slides)
+        self._slide_trans.setEnabled(has)
+        self._slide_trans_dur.setEnabled(has)
+
+        if not has:
+            return
+
+        slide = slides[self._slide_sel]
+
+        self._slide_hold.blockSignals(True)
+        self._slide_hold.setValue(slide.hold_duration)
+        self._slide_hold.blockSignals(False)
+
+        self._slide_trans.blockSignals(True)
+        tidx = self._slide_trans.findData(slide.transition)
+        if tidx >= 0:
+            self._slide_trans.setCurrentIndex(tidx)
+        self._slide_trans.blockSignals(False)
+
+        self._slide_trans_dur.blockSignals(True)
+        self._slide_trans_dur.setValue(slide.transition_duration)
+        self._slide_trans_dur.blockSignals(False)
+
+        self._trans_dur_lbl.setVisible(slide.transition != 'cut')
+        self._slide_trans_dur.setVisible(slide.transition != 'cut')
 
     # ── mode switching ────────────────────────────────────────────────────────
 
@@ -510,8 +675,12 @@ class LightingEditorWindow(QMainWindow):
         else:
             self._stop_preset_preview()
 
-        if idx == 2 and self._anim_kf_sel >= 0:
-            self._refresh_kbd_for_kf(self._anim_kf_sel)
+        if idx == 2:
+            self._stop_animation_preview()
+            if self._slide_sel >= 0:
+                self._refresh_kbd_for_slide(self._slide_sel)
+            else:
+                self._refresh_kbd()
         elif idx == 0:
             self._refresh_kbd()
 
@@ -529,17 +698,19 @@ class LightingEditorWindow(QMainWindow):
             self._kbd.unsetCursor()
 
     def _run_tool(self, name: str) -> None:
-        in_anim = (self._config.mode == 'animation' and self._anim_kf_sel >= 0
+        in_anim = (self._config.mode == 'animation' and self._slide_sel >= 0
                    and self._config.animation)
-        if name == 'fill_all':
+        if name == 'fill_sel':
             c = self._cpanel.colour()
+            sel = list(self._kbd.selection) if self._kbd.selection else list(_ALL_KEYS)
             if in_anim:
-                kf = self._config.animation.keyframes[self._anim_kf_sel]
-                for key in _ALL_KEYS:
-                    kf.key_colours[key] = c.name()
-                self._refresh_kbd_for_kf(self._anim_kf_sel)
+                slide = self._config.animation.slides[self._slide_sel]
+                for key in sel:
+                    slide.key_colours[key] = c.name()
+                self._refresh_kbd_for_slide(self._slide_sel)
+                self._refresh_filmstrip()
             else:
-                for key in _ALL_KEYS:
+                for key in sel:
                     self._config.key_colours[key] = c.name()
                 self._refresh_kbd()
         elif name == 'gradient':
@@ -564,9 +735,10 @@ class LightingEditorWindow(QMainWindow):
             b  = int(c1.blue()  + (c2.blue()  - c1.blue())  * t)
             result[key] = QColor(r, g, b).name()
         if in_anim:
-            kf = self._config.animation.keyframes[self._anim_kf_sel]
-            kf.key_colours.update(result)
-            self._refresh_kbd_for_kf(self._anim_kf_sel)
+            slide = self._config.animation.slides[self._slide_sel]
+            slide.key_colours.update(result)
+            self._refresh_kbd_for_slide(self._slide_sel)
+            self._refresh_filmstrip()
         else:
             self._config.key_colours.update(result)
             self._refresh_kbd()
@@ -579,61 +751,73 @@ class LightingEditorWindow(QMainWindow):
                 self._pick_colour_from_key(keys[0])
                 self._set_tool('select')
             return
-        if len(keys) == 1:
+        # In select mode only: sync colour panel to a single selected key.
+        # Brush mode must NOT do this — selection_changed fires before key_entered,
+        # so updating the panel here would overwrite the brush colour before painting.
+        if self._tool == 'select' and len(keys) == 1:
             self._pick_colour_from_key(keys[0])
 
     def _pick_colour_from_key(self, key: str) -> None:
-        if self._config.mode == 'animation' and self._anim_kf_sel >= 0 and self._config.animation:
-            resolved: dict[str, str] = {}
-            for i in range(min(self._anim_kf_sel + 1, len(self._config.animation.keyframes))):
-                resolved.update(self._config.animation.keyframes[i].key_colours)
-            hex_c = resolved.get(key, self._config.base_colour)
+        if self._config.mode == 'animation' and self._slide_sel >= 0 and self._config.animation:
+            slide = self._config.animation.slides[self._slide_sel]
+            hex_c = slide.key_colours.get(key, self._config.base_colour)
         else:
             hex_c = self._config.key_colours.get(key, self._config.base_colour)
         self._cpanel.set_colour(QColor(hex_c))
 
     def _on_key_brush(self, key: str) -> None:
         c = self._cpanel.colour()
-        if self._config.mode == 'animation' and self._anim_kf_sel >= 0 and self._config.animation:
-            kf = self._config.animation.keyframes[self._anim_kf_sel]
-            kf.key_colours[key] = c.name()
+        if self._config.mode == 'animation' and self._slide_sel >= 0 and self._config.animation:
+            slide = self._config.animation.slides[self._slide_sel]
+            slide.key_colours[key] = c.name()
             self._kbd.set_key_colour(key, c, is_inherited=False)
+            self._refresh_filmstrip()
         else:
             self._config.key_colours[key] = c.name()
             self._kbd.set_key_colour(key, c, is_inherited=False)
 
     def _on_colour(self, colour: QColor) -> None:
-        sel = self._kbd.selection
+        """Colour panel changed — auto-paint selected keys (select tool) or update base colour."""
         if self._config.mode == 'preset':
-            # Colour panel drives preset slot 0 (primary colour)
             self._pc_colours[0] = colour.name()
             self._refresh_pc_btns()
             self._sync_preset_config()
             self._preview_t0 = _time.monotonic()
             self._schedule_auto_apply()
             return
-        if self._config.mode == 'animation' and self._anim_kf_sel >= 0 and self._config.animation:
-            kf = self._config.animation.keyframes[self._anim_kf_sel]
+
+        # Brush mode: panel is just the brush colour source — don't auto-paint.
+        if self._tool == 'brush':
+            return
+
+        sel = self._kbd.selection
+
+        if self._config.mode == 'animation' and self._slide_sel >= 0 and self._config.animation:
+            slide = self._config.animation.slides[self._slide_sel]
             if sel:
                 for key in sel:
-                    kf.key_colours[key] = colour.name()
+                    slide.key_colours[key] = colour.name()
+                self._refresh_kbd_for_slide(self._slide_sel)
+                self._refresh_filmstrip()
             else:
                 self._config.base_colour = colour.name()
-            self._refresh_kbd_for_kf(self._anim_kf_sel)
-        else:
+                self._refresh_kbd_for_slide(self._slide_sel)
+                self._refresh_filmstrip()
+        elif self._config.mode == 'static':
             if sel:
                 for key in sel:
                     self._config.key_colours[key] = colour.name()
+                self._refresh_kbd()
             else:
                 self._config.base_colour = colour.name()
-            self._refresh_kbd()
+                self._refresh_kbd()
 
     # ── preset controls ───────────────────────────────────────────────────────
 
     def _on_preset_param(self) -> None:
         self._sync_preset_config()
         self._refresh_pc_visibility()
-        self._preview_t0 = _time.monotonic()   # restart animation on param change
+        self._preview_t0 = _time.monotonic()
         self._schedule_auto_apply()
 
     def _on_speed(self, val: int) -> None:
@@ -656,7 +840,6 @@ class LightingEditorWindow(QMainWindow):
             self._pc_colours[idx] = c.name()
             self._refresh_pc_btns()
             self._sync_preset_config()
-            # Sync colour panel to the picked colour so HSV sliders are live
             self._cpanel.set_colour(c)
             self._preview_t0 = _time.monotonic()
             self._schedule_auto_apply()
@@ -678,147 +861,267 @@ class LightingEditorWindow(QMainWindow):
         except Exception:
             self._dir_combo.setVisible(show_dir)
 
-    # ── animation controls ────────────────────────────────────────────────────
+    # ── animation — slide management ──────────────────────────────────────────
 
-    def _on_anim_duration(self, val: float) -> None:
+    def _get_slides(self) -> list[Slide]:
         anim = self._ensure_anim()
-        anim.duration = val
-        self._timeline.set_animation(anim.duration, anim.keyframes)
+        return anim.slides
+
+    def _ensure_anim(self) -> AnimationConfig:
+        if self._config.animation is None:
+            self._config.animation = AnimationConfig()
+        return self._config.animation
+
+    def _on_add_slide_btn(self) -> None:
+        slides = self._get_slides()
+        # Append after current selection (or at end if none)
+        after = self._slide_sel if self._slide_sel >= 0 else len(slides) - 1
+        self._on_slide_add_after(after)
+
+    def _on_blank_slide_btn(self) -> None:
+        """Insert a completely blank slide after the current selection."""
+        slides    = self._get_slides()
+        insert_at = (self._slide_sel + 1) if self._slide_sel >= 0 else len(slides)
+        slides.insert(insert_at, Slide())
+        self._slide_sel = insert_at
+        self._refresh_filmstrip()
+        self._update_slide_controls()
+        self._refresh_kbd_for_slide(self._slide_sel)
+
+    def _on_hold_all(self) -> None:
+        val = self._slide_hold.value()
+        for slide in self._get_slides():
+            slide.hold_duration = val
+
+    def _on_trans_all(self) -> None:
+        trans = self._slide_trans.currentData()
+        for slide in self._get_slides():
+            slide.transition = trans
+        self._update_slide_controls()   # refresh visibility of duration widgets
+
+    def _on_trans_dur_all(self) -> None:
+        dur = self._slide_trans_dur.value()
+        for slide in self._get_slides():
+            slide.transition_duration = dur
+
+    def _on_del_slide_btn(self) -> None:
+        self._on_slide_delete(self._slide_sel)
+
+    def _on_slide_selected(self, idx: int) -> None:
+        self._stop_animation_preview()
+        self._slide_sel = idx
+        self._filmstrip.set_selected(idx)
+        self._update_slide_controls()
+        self._refresh_kbd_for_slide(idx)
+
+    def _on_slide_add_after(self, after_idx: int) -> None:
+        """Insert a new slide after after_idx (-1 = prepend)."""
+        slides = self._get_slides()
+        # Inherit colours from the slide at after_idx (if any)
+        if after_idx >= 0 and after_idx < len(slides):
+            prev = slides[after_idx]
+            new_slide = Slide(
+                key_colours=dict(prev.key_colours),
+                hold_duration=prev.hold_duration,
+                transition=prev.transition,
+                transition_duration=prev.transition_duration,
+            )
+        else:
+            # First slide or prepend: blank slate
+            new_slide = Slide()
+
+        insert_at = after_idx + 1
+        slides.insert(insert_at, new_slide)
+        self._slide_sel = insert_at
+        self._refresh_filmstrip()
+        self._update_slide_controls()
+        self._refresh_kbd_for_slide(self._slide_sel)
+
+    def _on_slide_delete(self, idx: int) -> None:
+        slides = self._get_slides()
+        if len(slides) <= 1:
+            return
+        del slides[idx]
+        self._slide_sel = min(idx, len(slides) - 1)
+        self._refresh_filmstrip()
+        self._update_slide_controls()
+        self._refresh_kbd_for_slide(self._slide_sel)
 
     def _on_anim_loop(self, checked: bool) -> None:
         self._ensure_anim().loop = checked
 
-    def _on_kf_selected(self, idx: int) -> None:
-        self._anim_kf_sel = idx
-        self._update_anim_controls()
-        if idx >= 0:
-            self._refresh_kbd_for_kf(idx)
+    def _on_slide_hold(self, val: float) -> None:
+        slides = self._get_slides()
+        if 0 <= self._slide_sel < len(slides):
+            slides[self._slide_sel].hold_duration = val
 
-    def _on_kf_add_btn(self) -> None:
-        t = self._timeline._playhead
-        self._on_kf_add(round(t, 3))
+    def _on_slide_trans(self) -> None:
+        slides = self._get_slides()
+        if 0 <= self._slide_sel < len(slides):
+            slides[self._slide_sel].transition = self._slide_trans.currentData()
+            is_cut = (self._slide_trans.currentData() == 'cut')
+            self._trans_dur_lbl.setVisible(not is_cut)
+            self._slide_trans_dur.setVisible(not is_cut)
 
-    def _on_kf_add(self, t: float) -> None:
-        anim = self._ensure_anim()
-        # Skip if very close to an existing keyframe
-        for kf in anim.keyframes:
-            if abs(kf.time - t) < 0.02:
+    def _on_slide_trans_dur(self, val: float) -> None:
+        slides = self._get_slides()
+        if 0 <= self._slide_sel < len(slides):
+            slides[self._slide_sel].transition_duration = val
+
+    # ── animation preview ─────────────────────────────────────────────────────
+
+    def _on_preview_toggled(self, checked: bool) -> None:
+        if checked:
+            slides = self._get_slides()
+            if not slides:
+                self._btn_preview.setChecked(False)
                 return
-        anim.keyframes.append(Keyframe(time=t))
-        anim.keyframes.sort(key=lambda k: k.time)
-        new_idx = next(i for i, kf in enumerate(anim.keyframes)
-                       if abs(kf.time - t) < 0.02)
-        self._timeline.set_animation(anim.duration, anim.keyframes)
-        self._timeline.set_selected(new_idx)
-        self._on_kf_selected(new_idx)
+            self._btn_preview.setText('■  Stop')
+            self._start_animation_preview()
+        else:
+            self._btn_preview.setText('▶  Preview')
+            self._stop_animation_preview()
 
-    def _on_kf_del_btn(self) -> None:
-        if self._anim_kf_sel > 0:
-            self._on_kf_del(self._anim_kf_sel)
+    def _start_animation_preview(self) -> None:
+        # Push animation config to hardware for live keyboard preview
+        self._pre_preview_lighting = copy.deepcopy(self._profile.lighting)
+        self._profile.lighting = copy.deepcopy(self._config)
+        cfg.save_profile(self._profile)
+        try:
+            from kyxen_keys import daemon
+            daemon.daemon_reload()
+        except Exception:
+            pass
 
-    def _on_kf_del(self, idx: int) -> None:
+        if self._preview_timer is None:
+            self._preview_timer = QTimer(self)
+            self._preview_timer.timeout.connect(self._tick_anim_preview)
+        self._preview_t0 = _time.monotonic()
+        self._preview_timer.start(50)   # ~20fps matches hardware engine
+
+    def _stop_animation_preview(self) -> None:
+        if self._preview_timer is not None:
+            self._preview_timer.stop()
+        if self._btn_preview.isChecked():
+            self._btn_preview.blockSignals(True)
+            self._btn_preview.setChecked(False)
+            self._btn_preview.setText('▶  Preview')
+            self._btn_preview.blockSignals(False)
+
+        # Restore the pre-preview hardware state
+        if self._pre_preview_lighting is not None:
+            self._profile.lighting = self._pre_preview_lighting
+            self._pre_preview_lighting = None
+            cfg.save_profile(self._profile)
+            try:
+                from kyxen_keys import daemon
+                daemon.daemon_reload()
+            except Exception:
+                pass
+
+        # Restore keyboard widget to selected slide
+        if self._slide_sel >= 0:
+            self._refresh_kbd_for_slide(self._slide_sel)
+
+    def _tick_anim_preview(self) -> None:
+        from kyxen_keys.lighting_engine import _build_animation
+
         anim = self._config.animation
-        if not anim or not anim.keyframes or idx == 0:
+        if not anim or not anim.slides:
+            self._stop_animation_preview()
             return
-        del anim.keyframes[idx]
-        new_sel = min(idx, len(anim.keyframes) - 1)
-        self._timeline.set_animation(anim.duration, anim.keyframes)
-        self._timeline.set_selected(new_sel)
-        self._on_kf_selected(new_sel)
 
-    def _on_kf_moved(self, idx: int, new_time: float) -> None:
-        anim = self._config.animation
-        if not anim:
+        t     = _time.monotonic() - self._preview_t0
+        frame = _build_animation(self._config, t)
+        colours = {k: QColor(*v) for k, v in frame.items() if k in _PX_RECTS}
+        self._kbd.set_colours(colours)
+
+    # ── animation library ─────────────────────────────────────────────────────
+
+    def _on_anim_save_library(self) -> None:
+        import tomli_w
+        anim = self._ensure_anim()
+        if not anim.slides:
+            QMessageBox.warning(self, 'Nothing to save', 'Add at least one slide first.')
             return
-        anim.keyframes.sort(key=lambda k: k.time)
-        new_idx = next(
-            (i for i, kf in enumerate(anim.keyframes) if abs(kf.time - new_time) < 0.01),
-            idx,
-        )
-        self._anim_kf_sel = new_idx
-        self._timeline.set_selected(new_idx)
-
-    def _on_kf_transition(self) -> None:
-        if self._anim_kf_sel < 0:
+        name, ok = QInputDialog.getText(self, 'Save Animation', 'Animation name:')
+        if not ok or not name.strip():
             return
-        anim = self._config.animation
-        if not anim or self._anim_kf_sel >= len(anim.keyframes):
+        name = name.strip()
+        _ANIM_DIR.mkdir(parents=True, exist_ok=True)
+        path = _ANIM_DIR / f'{name}.toml'
+        with open(path, 'wb') as f:
+            tomli_w.dump(anim.to_dict(), f)
+
+    def _on_anim_load_library(self) -> None:
+        import tomllib
+        _ANIM_DIR.mkdir(parents=True, exist_ok=True)
+        files = sorted(_ANIM_DIR.glob('*.toml'))
+        if not files:
+            QMessageBox.information(self, 'Library empty',
+                                    'No saved animations found.\nSave one first.')
             return
-        anim.keyframes[self._anim_kf_sel].transition = self._trans_combo.currentData()
-        self._timeline.update()
-
-    def _on_kf_trans_ext(self, idx: int, trans: str) -> None:
-        if idx == self._anim_kf_sel:
-            self._trans_combo.blockSignals(True)
-            tidx = self._trans_combo.findData(trans)
-            if tidx >= 0:
-                self._trans_combo.setCurrentIndex(tidx)
-            self._trans_combo.blockSignals(False)
-
-    def _ensure_anim(self) -> AnimationConfig:
-        if self._config.animation is None:
-            self._config.animation = AnimationConfig(
-                duration=self._dur_spin.value(),
-                keyframes=[Keyframe(time=0.0)],
-            )
-        return self._config.animation
-
-    def _update_anim_controls(self) -> None:
-        idx = self._anim_kf_sel
-        has = idx >= 0
-        self._btn_del_kf.setEnabled(has and idx > 0)
-        self._trans_combo.setEnabled(has)
-        if has and self._config.animation and idx < len(self._config.animation.keyframes):
-            trans = self._config.animation.keyframes[idx].transition
-            self._trans_combo.blockSignals(True)
-            tidx = self._trans_combo.findData(trans)
-            if tidx >= 0:
-                self._trans_combo.setCurrentIndex(tidx)
-            self._trans_combo.blockSignals(False)
+        names = [f.stem for f in files]
+        dlg   = _LibraryDialog(names, self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        chosen = dlg.selected_name()
+        if not chosen:
+            return
+        path = _ANIM_DIR / f'{chosen}.toml'
+        with open(path, 'rb') as f:
+            data = tomllib.load(f)
+        self._config.animation = AnimationConfig.from_dict(data)
+        self._config.mode = 'animation'
+        self._slide_sel = 0 if self._config.animation.slides else -1
+        self._loop_chk.setChecked(self._config.animation.loop)
+        self._refresh_filmstrip()
+        self._update_slide_controls()
+        if self._slide_sel >= 0:
+            self._refresh_kbd_for_slide(self._slide_sel)
 
     # ── preset preview (runs in editor only, no hardware) ────────────────────
 
     def _start_preset_preview(self) -> None:
-        if not hasattr(self, '_preview_timer'):
-            self._preview_timer = QTimer(self)
-            self._preview_timer.timeout.connect(self._tick_preset)
+        if not hasattr(self, '_preset_timer'):
+            self._preset_timer = QTimer(self)
+            self._preset_timer.timeout.connect(self._tick_preset)
         self._preview_t0 = _time.monotonic()
-        self._preview_timer.start(16)   # ~60 fps target
+        self._preset_timer.start(16)
 
     def _stop_preset_preview(self) -> None:
-        if hasattr(self, '_preview_timer'):
-            self._preview_timer.stop()
+        if hasattr(self, '_preset_timer'):
+            self._preset_timer.stop()
 
     def _tick_preset(self) -> None:
         pc = self._config.preset
         if not pc:
             return
-        t      = _time.monotonic() - self._preview_t0
-        speed  = max(pc.speed, 0.01)
+        t     = _time.monotonic() - self._preview_t0
+        speed = max(pc.speed, 0.01)
         colours: dict[str, QColor] = {}
 
         if pc.name == 'breathing':
-            base = QColor(pc.colours[0] if pc.colours else self._config.base_colour)
-            phase = (t * speed * 0.25) % 1.0   # match engine: period = 4/speed seconds
-            br = (math.sin(phase * math.pi * 2 - math.pi / 2) + 1) / 2
+            base  = QColor(pc.colours[0] if pc.colours else self._config.base_colour)
+            br    = (math.sin(t * speed * 0.25 * math.pi * 2 - math.pi / 2) + 1) / 2
             for key in _ALL_KEYS:
                 colours[key] = QColor(
                     int(base.red() * br), int(base.green() * br), int(base.blue() * br)
                 )
 
         elif pc.name == 'wave':
-            base    = QColor(pc.colours[0] if pc.colours else self._config.base_colour)
-            use_y   = pc.direction in ('top_bottom', 'bottom_top')
-            pos     = {kr.name: kr.y for kr in _LAYOUT} if use_y else {kr.name: kr.x for kr in _LAYOUT}
-            mn, mx  = min(pos.values()), max(pos.values())
-            span    = max(mx - mn, 0.001)
-            wave_t  = (t * speed * 0.25) % 1.0   # match engine coefficient
+            base   = QColor(pc.colours[0] if pc.colours else self._config.base_colour)
+            use_y  = pc.direction in ('top_bottom', 'bottom_top')
+            pos    = {kr.name: kr.y for kr in _LAYOUT} if use_y else {kr.name: kr.x for kr in _LAYOUT}
+            mn, mx = min(pos.values()), max(pos.values())
+            span   = max(mx - mn, 0.001)
+            wt     = (t * speed * 0.25) % 1.0
             if pc.direction in ('right_left', 'bottom_top'):
-                wave_t = 1.0 - wave_t
+                wt = 1.0 - wt
             for key in _ALL_KEYS:
-                key_pos = (pos.get(key, mn) - mn) / span
-                dist = min(abs(key_pos - wave_t), 1.0 - abs(key_pos - wave_t))
-                br = max(0.0, 1.0 - dist * 6)
+                kp   = (pos.get(key, mn) - mn) / span
+                dist = min(abs(kp - wt), 1.0 - abs(kp - wt))
+                br   = max(0.0, 1.0 - dist * 6)
                 colours[key] = QColor(
                     int(base.red() * br), int(base.green() * br), int(base.blue() * br)
                 )
@@ -828,20 +1131,20 @@ class LightingEditorWindow(QMainWindow):
             pos    = {kr.name: kr.y for kr in _LAYOUT} if use_y else {kr.name: kr.x for kr in _LAYOUT}
             mn, mx = min(pos.values()), max(pos.values())
             span   = max(mx - mn, 0.001)
-            wave_t = (t * speed * 0.1) % 1.0   # match engine coefficient
+            wt     = (t * speed * 0.1) % 1.0
             rev    = pc.direction in ('right_left', 'bottom_top')
             for key in _ALL_KEYS:
-                key_pos = (pos.get(key, mn) - mn) / span
-                hue = ((1.0 - key_pos if rev else key_pos) - wave_t) % 1.0
+                kp  = (pos.get(key, mn) - mn) / span
+                hue = ((1.0 - kp if rev else kp) - wt) % 1.0
                 r, g, b = colorsys.hsv_to_rgb(hue, 1.0, 1.0)
                 colours[key] = QColor(int(r * 255), int(g * 255), int(b * 255))
 
         elif pc.name == 'colour_cycle':
-            clrs = pc.colours if pc.colours else [self._config.base_colour]
-            n    = len(clrs)
+            clrs  = pc.colours if pc.colours else [self._config.base_colour]
+            n     = len(clrs)
             phase = (t * speed) % n
             i0, i1 = int(phase) % n, (int(phase) + 1) % n
-            frac = phase - int(phase)
+            frac  = phase - int(phase)
             c0, c1 = QColor(clrs[i0]), QColor(clrs[i1])
             col = QColor(
                 int(c0.red()   + (c1.red()   - c0.red())   * frac),
@@ -854,30 +1157,12 @@ class LightingEditorWindow(QMainWindow):
         if colours:
             self._kbd.set_colours(colours)
 
-    # ── animation playhead scrub ──────────────────────────────────────────────
-
-    def _on_playhead_scrub(self, t: float) -> None:
-        if self._config.mode != 'animation':
-            return
-        anim = self._config.animation
-        if not anim or not anim.keyframes:
-            return
-        # Find the last keyframe at or before t
-        kfs = anim.keyframes  # already sorted
-        kf_idx = 0
-        for i, kf in enumerate(kfs):
-            if kf.time <= t + 1e-9:
-                kf_idx = i
-        self._refresh_kbd_for_kf(kf_idx)
-
     # ── auto-apply (preset live preview on hardware) ──────────────────────────
 
     def _schedule_auto_apply(self) -> None:
-        """Debounce-restart the auto-apply timer; fires 400 ms after last change."""
         self._apply_timer.start()
 
     def _do_auto_apply(self) -> None:
-        """Push current preset config to hardware; no-op if no longer in preset mode."""
         if self._config.mode != 'preset':
             return
         self._sync_preset_config()
@@ -893,8 +1178,8 @@ class LightingEditorWindow(QMainWindow):
             self._sync_preset_config()
         if self._config.mode == 'animation':
             anim = self._config.animation
-            if anim and not anim.keyframes:
-                anim.keyframes = [Keyframe(time=0.0)]
+            if anim and not anim.slides:
+                anim.slides = [Slide()]
         self._profile.lighting = copy.deepcopy(self._config)
         cfg.save_profile(self._profile)
         from kyxen_keys import daemon
@@ -902,12 +1187,43 @@ class LightingEditorWindow(QMainWindow):
 
     def _revert(self) -> None:
         self._apply_timer.stop()
+        self._stop_animation_preview()
+        self._stop_preset_preview()
         self._config      = copy.deepcopy(self._profile.lighting)
-        self._anim_kf_sel = -1
+        self._slide_sel   = -1
         self._load_config()
 
     def closeEvent(self, event) -> None:
         self._apply_timer.stop()
         self._stop_preset_preview()
+        self._stop_animation_preview()
         self.closed.emit()
         super().closeEvent(event)
+
+
+# ── Library selection dialog ──────────────────────────────────────────────────
+
+class _LibraryDialog(QDialog):
+    def __init__(self, names: list[str], parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle('Load Animation')
+        self.setMinimumWidth(300)
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel('Choose a saved animation:'))
+        self._list = QListWidget()
+        for n in names:
+            self._list.addItem(QListWidgetItem(n))
+        if names:
+            self._list.setCurrentRow(0)
+        self._list.itemDoubleClicked.connect(self.accept)
+        layout.addWidget(self._list)
+        btns = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        layout.addWidget(btns)
+
+    def selected_name(self) -> str | None:
+        item = self._list.currentItem()
+        return item.text() if item else None
