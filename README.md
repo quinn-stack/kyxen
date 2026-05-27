@@ -267,6 +267,42 @@ direction = "left_right"
 speed = 1.0
 ```
 
+## Keyboard Profiler
+
+`kyxen-profiler` is a wizard that helps you map the LED addresses and key layout for an
+unsupported keyboard model, then generates a ready-to-use driver file.
+
+```bash
+kyxen-profiler
+# or during development:
+python3 -m kyxen_keys.profiler
+```
+
+**Stop `kyxen-daemon` first** — it holds the HID device open, which can interfere with
+the probe commands.
+
+### Wizard steps
+
+1. **Device Setup** — pick the `/dev/hidrawN` device for your keyboard, enter the model
+   name (e.g. `G512`) and G-key count.
+
+2. **LED → Key Mapping** — the probe cycles through LED addresses 0x01–0xFF, lighting
+   each one white for up to 10 seconds. Press the physically lit key on your keyboard,
+   or click **Skip** if nothing lights up for that address.
+
+3. **Key Layout** — assign X/Y/W/H positions to each mapped key (positions are in "key
+   units", where 1 unit ≈ one standard key width). Click **Load G815 positions** to
+   auto-fill positions for any key names that match the G815 layout.
+
+4. **Generated Driver** — review the generated Python driver, then copy to clipboard or
+   save. To install it:
+   - Save to `src/kyxen_keys/keyboards/logitech_<model>.py`
+   - Add the class to `ALL_DRIVERS` in `src/kyxen_keys/keyboards/__init__.py`
+   - Reinstall with `pip install -e .`
+
+The generated driver includes `KEY_IDS` (LED address map) and `LAYOUT` (key positions)
+ready for the `LightingEngine` to use.
+
 ## Developer tools
 
 Several scripts in `tools/` are useful when reverse-engineering a new keyboard

@@ -45,11 +45,34 @@ class KyxenDaemon:
 
     # ── startup / shutdown ────────────────────────────────────────────────────
 
+    def _wait_for_keyboard(self) -> LogitechKeyboard | None:
+        """
+        Try to detect a supported keyboard, retrying every 10 seconds until one
+        is found or the user presses Ctrl+C.
+
+        This means dropping a driver file into ~/.config/kyxen/drivers/ while the
+        daemon is running is enough to activate support — no daemon restart needed.
+        """
+        first = True
+        while True:
+            kb = detect_keyboard()
+            if kb is not None:
+                return kb
+            if first:
+                print('[kyxen] no supported keyboard found.')
+                print('[kyxen] → Run  kyxen-profiler  to create a driver for your keyboard.')
+                print(f'[kyxen] → Drop the generated .py file into  {cfg.DRIVERS_DIR}')
+                print('[kyxen] Waiting — will retry every 10 s when a new driver is added...')
+                first = False
+            try:
+                time.sleep(10)
+            except KeyboardInterrupt:
+                return None
+
     def start(self) -> None:
-        self._keyboard = detect_keyboard()
+        self._keyboard = self._wait_for_keyboard()
         if self._keyboard is None:
-            print('[kyxen] no supported keyboard found — exiting')
-            return
+            return   # interrupted by Ctrl+C during wait
 
         # Remap must happen before grab: setProfile causes a brief USB state
         # flush that invalidates any hidraw fd already open on the G-key interface.
@@ -90,7 +113,10 @@ class KyxenDaemon:
 
         # Start lighting engine and apply the active profile's lighting config.
         if hidraw:
-            self._lighting_engine = LightingEngine(hidraw, lambda: not self._running)
+            self._lighting_engine = LightingEngine(
+                hidraw, lambda: not self._running,
+                key_ids=self._keyboard.get_key_ids() or None,
+            )
             threading.Thread(target=self._lighting_engine.run, daemon=True).start()
             if self._active_profile in self._profiles:
                 self._lighting_engine.set_config(

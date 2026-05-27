@@ -18,7 +18,7 @@ import time
 from collections.abc import Callable
 
 from .lighting_config import LightingConfig, Slide
-from .lighting import KEY_IDS
+from .lighting import KEY_IDS as _G815_KEY_IDS
 from .keyboard_layout import LAYOUT as _LAYOUT
 
 _TICK = 0.05   # 20fps
@@ -125,16 +125,17 @@ def _write_frame(
     fd: int,
     frame: dict[str, tuple[int, int, int]],
     prev: dict[str, tuple[int, int, int]] | None,
+    key_ids: dict[str, int] = _G815_KEY_IDS,
 ) -> None:
     """Write changed keys batched 3 per packet ([key_id, key_id, r, g, b] × 3), then commit."""
     changed: list[tuple[int, int, int, int]] = []
     for key_name, (r, g, b) in frame.items():
-        key_id = KEY_IDS.get(key_name)
-        if key_id is None:
+        kid = key_ids.get(key_name)
+        if kid is None:
             continue
         if prev is not None and prev.get(key_name) == (r, g, b):
             continue
-        changed.append((key_id, r, g, b))
+        changed.append((kid, r, g, b))
     if not changed:
         return
     p = bytearray(20)
@@ -151,11 +152,14 @@ def _write_frame(
 
 # ── Frame builders ────────────────────────────────────────────────────────────
 
-def _base_frame(config: LightingConfig) -> dict[str, tuple[int, int, int]]:
+def _base_frame(
+    config: LightingConfig,
+    key_ids: dict[str, int] = _G815_KEY_IDS,
+) -> dict[str, tuple[int, int, int]]:
     base = _hex_to_rgb(config.base_colour)
-    frame = {k: base for k in KEY_IDS}
+    frame = {k: base for k in key_ids}
     for key_name, hex_col in config.key_colours.items():
-        if key_name in KEY_IDS:
+        if key_name in key_ids:
             frame[key_name] = _hex_to_rgb(hex_col)
     return frame
 
@@ -170,24 +174,35 @@ def _coord_for_key(key_name: str, direction: str) -> float:
     return min(1.0, math.hypot(x - 0.5, y - 0.5) * 2)
 
 
-def _build_static(config: LightingConfig) -> dict[str, tuple[int, int, int]]:
-    return _base_frame(config)
+def _build_static(
+    config: LightingConfig,
+    key_ids: dict[str, int] = _G815_KEY_IDS,
+) -> dict[str, tuple[int, int, int]]:
+    return _base_frame(config, key_ids)
 
 
-def _build_breathing(config: LightingConfig, t: float) -> dict[str, tuple[int, int, int]]:
+def _build_breathing(
+    config: LightingConfig,
+    t: float,
+    key_ids: dict[str, int] = _G815_KEY_IDS,
+) -> dict[str, tuple[int, int, int]]:
     speed = config.preset.speed  # type: ignore[union-attr]
     brightness = (math.sin(t * math.pi * speed * 0.5) + 1) / 2
     r0, g0, b0 = _hex_to_rgb(config.preset.colours[0])  # type: ignore[union-attr]
     c = (int(r0 * brightness), int(g0 * brightness), int(b0 * brightness))
-    return {k: c for k in KEY_IDS}
+    return {k: c for k in key_ids}
 
 
-def _build_wave(config: LightingConfig, t: float) -> dict[str, tuple[int, int, int]]:
+def _build_wave(
+    config: LightingConfig,
+    t: float,
+    key_ids: dict[str, int] = _G815_KEY_IDS,
+) -> dict[str, tuple[int, int, int]]:
     preset = config.preset  # type: ignore[union-attr]
     c1 = _hex_to_rgb(preset.colours[0])
     c2 = _hex_to_rgb(preset.colours[1]) if len(preset.colours) > 1 else (0, 0, 0)
     frame: dict[str, tuple[int, int, int]] = {}
-    for key_name in KEY_IDS:
+    for key_name in key_ids:
         coord = _coord_for_key(key_name, preset.direction)
         phase = (coord - t * preset.speed * 0.25) % 1.0
         bright = (math.sin(phase * 2 * math.pi) + 1) / 2
@@ -199,10 +214,14 @@ def _build_wave(config: LightingConfig, t: float) -> dict[str, tuple[int, int, i
     return frame
 
 
-def _build_rainbow_wave(config: LightingConfig, t: float) -> dict[str, tuple[int, int, int]]:
+def _build_rainbow_wave(
+    config: LightingConfig,
+    t: float,
+    key_ids: dict[str, int] = _G815_KEY_IDS,
+) -> dict[str, tuple[int, int, int]]:
     preset = config.preset  # type: ignore[union-attr]
     frame: dict[str, tuple[int, int, int]] = {}
-    for key_name in KEY_IDS:
+    for key_name in key_ids:
         coord = _coord_for_key(key_name, preset.direction)
         hue = (coord - t * preset.speed * 0.1) % 1.0
         r, g, b = colorsys.hsv_to_rgb(hue, 1.0, 1.0)
@@ -210,21 +229,26 @@ def _build_rainbow_wave(config: LightingConfig, t: float) -> dict[str, tuple[int
     return frame
 
 
-def _build_colour_cycle(config: LightingConfig, t: float) -> dict[str, tuple[int, int, int]]:
+def _build_colour_cycle(
+    config: LightingConfig,
+    t: float,
+    key_ids: dict[str, int] = _G815_KEY_IDS,
+) -> dict[str, tuple[int, int, int]]:
     preset = config.preset  # type: ignore[union-attr]
     hue = (t * preset.speed * 0.05) % 1.0
     r, g, b = colorsys.hsv_to_rgb(hue, 1.0, 1.0)
     c = (int(r * 255), int(g * 255), int(b * 255))
-    return {k: c for k in KEY_IDS}
+    return {k: c for k in key_ids}
 
 
 def _build_slide_state(
     slide: Slide,
     base: dict[str, tuple[int, int, int]],
+    key_ids: dict[str, int] = _G815_KEY_IDS,
 ) -> dict[str, tuple[int, int, int]]:
     state = dict(base)
     for key_name, hex_col in slide.key_colours.items():
-        if key_name in KEY_IDS:
+        if key_name in key_ids:
             state[key_name] = _hex_to_rgb(hex_col)
     return state
 
@@ -234,13 +258,14 @@ def _transition_frame(
     state_b: dict[str, tuple[int, int, int]],
     frac: float,
     transition: str,
+    key_ids: dict[str, int] = _G815_KEY_IDS,
 ) -> dict[str, tuple[int, int, int]]:
     if transition == 'cut':
         return state_b if frac >= 1.0 else state_a
 
     if transition in ('fade', 'ease', 'hsv'):
         mode = 'ease' if transition == 'ease' else 'hsv' if transition == 'hsv' else 'linear'
-        return {k: _interp_rgb(state_a[k], state_b[k], frac, mode) for k in KEY_IDS}
+        return {k: _interp_rgb(state_a[k], state_b[k], frac, mode) for k in key_ids}
 
     if transition in ('wipe_left', 'wipe_right', 'wipe_top', 'wipe_bottom'):
         direction_map = {
@@ -250,7 +275,7 @@ def _transition_frame(
             'wipe_bottom': 'bottom_top',
         }
         frame: dict[str, tuple[int, int, int]] = {}
-        for key in KEY_IDS:
+        for key in key_ids:
             coord = _coord_for_key(key, direction_map[transition])
             frame[key] = state_b[key] if coord <= frac else state_a[key]
         return frame
@@ -259,22 +284,26 @@ def _transition_frame(
         black = (0, 0, 0)
         if frac < 0.5:
             t2 = frac * 2
-            return {k: _interp_rgb(state_a[k], black, t2, 'linear') for k in KEY_IDS}
+            return {k: _interp_rgb(state_a[k], black, t2, 'linear') for k in key_ids}
         else:
             t2 = (frac - 0.5) * 2
-            return {k: _interp_rgb(black, state_b[k], t2, 'linear') for k in KEY_IDS}
+            return {k: _interp_rgb(black, state_b[k], t2, 'linear') for k in key_ids}
 
     # Fallback
-    return {k: _interp_rgb(state_a[k], state_b[k], frac, 'linear') for k in KEY_IDS}
+    return {k: _interp_rgb(state_a[k], state_b[k], frac, 'linear') for k in key_ids}
 
 
-def _build_animation(config: LightingConfig, t: float) -> dict[str, tuple[int, int, int]]:
+def _build_animation(
+    config: LightingConfig,
+    t: float,
+    key_ids: dict[str, int] = _G815_KEY_IDS,
+) -> dict[str, tuple[int, int, int]]:
     anim = config.animation  # type: ignore[union-attr]
     if not anim or not anim.slides:
-        return _build_static(config)
+        return _build_static(config, key_ids)
 
     slides = anim.slides
-    base   = _base_frame(config)
+    base   = _base_frame(config, key_ids)
 
     # Each slide occupies: hold_duration + transition_duration (0 for 'cut')
     phase_durations = [
@@ -283,7 +312,7 @@ def _build_animation(config: LightingConfig, t: float) -> dict[str, tuple[int, i
     ]
     total = sum(phase_durations)
     if total <= 0:
-        return _build_slide_state(slides[0], base)
+        return _build_slide_state(slides[0], base, key_ids)
 
     if anim.loop:
         t = t % total
@@ -297,18 +326,18 @@ def _build_animation(config: LightingConfig, t: float) -> dict[str, tuple[int, i
         phase_end = hold_end + trans_dur
 
         if t < hold_end:
-            return _build_slide_state(slide, base)
+            return _build_slide_state(slide, base, key_ids)
 
         if t < phase_end:
             frac    = (t - hold_end) / trans_dur if trans_dur > 0 else 1.0
             next_i  = (i + 1) % len(slides)
-            state_a = _build_slide_state(slide, base)
-            state_b = _build_slide_state(slides[next_i], base)
-            return _transition_frame(state_a, state_b, frac, slide.transition)
+            state_a = _build_slide_state(slide, base, key_ids)
+            state_b = _build_slide_state(slides[next_i], base, key_ids)
+            return _transition_frame(state_a, state_b, frac, slide.transition, key_ids)
 
         elapsed = phase_end
 
-    return _build_slide_state(slides[-1], base)
+    return _build_slide_state(slides[-1], base, key_ids)
 
 
 # ── Engine ────────────────────────────────────────────────────────────────────
@@ -317,11 +346,19 @@ class LightingEngine:
     """
     Run in a daemon thread via threading.Thread(target=engine.run, daemon=True).
     Push config changes with set_config(); the thread picks them up on next tick.
+
+    key_ids: LED address map for this keyboard model. Defaults to G815 if None.
     """
 
-    def __init__(self, hidraw_path: str, stop_flag: Callable[[], bool]) -> None:
+    def __init__(
+        self,
+        hidraw_path: str,
+        stop_flag: Callable[[], bool],
+        key_ids: dict[str, int] | None = None,
+    ) -> None:
         self._hidraw_path = hidraw_path
         self._stop_flag   = stop_flag
+        self._key_ids     = key_ids if key_ids is not None else _G815_KEY_IDS
         self._queue: queue.SimpleQueue[LightingConfig] = queue.SimpleQueue()
 
     def set_config(self, config: LightingConfig) -> None:
@@ -331,6 +368,7 @@ class LightingEngine:
         # config survives across reconnects so animation resumes after hardware events
         config:  LightingConfig | None = None
         t_start: float                 = time.monotonic()
+        ki = self._key_ids
 
         while not self._stop_flag():
             try:
@@ -371,8 +409,8 @@ class LightingEngine:
 
                     if config.mode == 'static':
                         if needs_write:
-                            frame = _build_static(config)
-                            _write_frame(fd, frame, prev_frame)
+                            frame = _build_static(config, ki)
+                            _write_frame(fd, frame, prev_frame, ki)
                             prev_frame  = frame
                             needs_write = False
                         time.sleep(_TICK)
@@ -380,23 +418,23 @@ class LightingEngine:
                     elif config.mode == 'preset' and config.preset is not None:
                         name = config.preset.name
                         if name == 'breathing':
-                            frame = _build_breathing(config, t)
+                            frame = _build_breathing(config, t, ki)
                         elif name == 'wave':
-                            frame = _build_wave(config, t)
+                            frame = _build_wave(config, t, ki)
                         elif name == 'rainbow_wave':
-                            frame = _build_rainbow_wave(config, t)
+                            frame = _build_rainbow_wave(config, t, ki)
                         elif name == 'colour_cycle':
-                            frame = _build_colour_cycle(config, t)
+                            frame = _build_colour_cycle(config, t, ki)
                         else:
-                            frame = _build_static(config)
-                        _write_frame(fd, frame, prev_frame)
+                            frame = _build_static(config, ki)
+                        _write_frame(fd, frame, prev_frame, ki)
                         prev_frame = frame
                         elapsed = time.monotonic() - tick_start
                         time.sleep(max(0.0, _TICK - elapsed))
 
                     elif config.mode == 'animation' and config.animation is not None:
-                        frame = _build_animation(config, t)
-                        _write_frame(fd, frame, prev_frame)
+                        frame = _build_animation(config, t, ki)
+                        _write_frame(fd, frame, prev_frame, ki)
                         prev_frame = frame
                         elapsed = time.monotonic() - tick_start
                         time.sleep(max(0.0, _TICK - elapsed))
@@ -404,8 +442,8 @@ class LightingEngine:
                     else:
                         # Unknown mode — treat as static
                         if needs_write:
-                            frame = _build_static(config)
-                            _write_frame(fd, frame, prev_frame)
+                            frame = _build_static(config, ki)
+                            _write_frame(fd, frame, prev_frame, ki)
                             prev_frame  = frame
                             needs_write = False
                         time.sleep(_TICK)

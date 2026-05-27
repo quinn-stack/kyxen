@@ -43,6 +43,11 @@ class LogitechKeyboard(ABC):
         active_mkey: 0-indexed M-key to highlight (0=M1, 1=M2, 2=M3), or None."""
         ...
 
+    def get_key_ids(self) -> dict[str, int]:
+        """Return the LED address map for this keyboard model (key_name → LED id).
+        Returns empty dict for keyboards without per-key lighting support."""
+        return {}
+
     # ── detection helpers (override _is_gkey_interface if needed) ────────────
 
     @classmethod

@@ -19,6 +19,7 @@ def _real_home() -> Path:
 
 CONFIG_DIR   = _real_home() / '.config' / 'kyxen'
 PROFILES_DIR = CONFIG_DIR / 'profiles'
+DRIVERS_DIR  = CONFIG_DIR / 'drivers'
 
 G_KEYS = ('g1', 'g2', 'g3', 'g4', 'g5')
 

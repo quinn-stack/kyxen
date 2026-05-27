@@ -26,8 +26,9 @@ dependencies = [
 ]
 
 [project.scripts]
-kyxen-daemon = "kyxen_keys.__main__:main"
-kyxen        = "kyxen_keys.gui.app:main"
+kyxen-daemon   = "kyxen_keys.__main__:main"
+kyxen          = "kyxen_keys.gui.app:main"
+kyxen-profiler = "kyxen_keys.profiler.__main__:main"
 
 [project.urls]
 Homepage   = "https://github.com/quinn-stack/kyxen"
