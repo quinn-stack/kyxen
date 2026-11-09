@@ -48,6 +48,15 @@ import time
 _LONG  = 0x11   # 20-byte HID++ long report ID
 _SHORT = 0x10   # 7-byte HID++ short report ID
 
+# HID++ 2.0 feature IDs. Their runtime *indices* differ per model and firmware
+# (e.g. ONBOARD_PROFILES is 0x11 on the G815 but 0x15 on the G915), so always
+# resolve them with get_feature_index().
+FEATURE_GKEY             = 0x8010
+FEATURE_MKEYS            = 0x8020
+FEATURE_RGB_EFFECTS      = 0x8071
+FEATURE_PER_KEY_LIGHTING = 0x8081   # PerKeyLightingV2
+FEATURE_ONBOARD_PROFILES = 0x8100
+
 SECTOR_ROM_1  = 0x0101   # profile 1 ROM sector — factory defaults, read-only
 SECTOR_ROM_2  = 0x0102   # profile 2 ROM sector
 SECTOR_ROM_3  = 0x0103   # profile 3 ROM sector
@@ -183,6 +192,24 @@ def _crc_valid(data: bytearray) -> bool:
     return expected == stored
 
 
+def _check_rom_sector(sector: int, data: bytearray) -> None:
+    """
+    Refuse to build a user sector from ROM data that does not look like the
+    expected profile layout: the CRC must be valid and G1–G5 must be bound to
+    F1–F5 (factory default) or F13–F17 (already remapped). Anything else means
+    the sector layout differs from what _patch_gkeys assumes, and writing the
+    patched copy to flash would corrupt the profile.
+    """
+    if not _crc_valid(data):
+        raise RuntimeError(f'ROM sector 0x{sector:04x} has an invalid CRC — refusing to write flash')
+    keys = bytes(data[GKEY_BLOCK_OFFSET + i * 4 + 3] for i in range(5))
+    if keys not in (_F1_F5, _F13_F17):
+        raise RuntimeError(
+            f'ROM sector 0x{sector:04x}: unexpected G-key bindings {keys.hex()} '
+            f'(expected F1–F5) — refusing to write flash'
+        )
+
+
 # ── public entry points ───────────────────────────────────────────────────────
 
 def get_feature_index(hidraw_path: str, uuid: int) -> int:
@@ -218,10 +245,17 @@ def ensure_gkey_remap(hidraw_path: str, feature_idx: int) -> bool:
             print('[onboard] G-key remap already F13–F17 on all profiles, skipping')
             return False
 
-        # Write all 3 profiles so M-key switching has valid flash for each slot.
-        print('[onboard] remapping G1–G5 → F13–F17 in keyboard flash (all 3 profiles)...')
+        # Read and validate every ROM sector before writing anything, so a
+        # layout mismatch can never leave the flash half-written.
+        rom_sectors = []
         for rom_addr, user_addr in _PROFILE_SECTORS:
             rom_data = _read_full_sector(fd, feature_idx, rom_addr)
+            _check_rom_sector(rom_addr, rom_data)
+            rom_sectors.append((user_addr, rom_data))
+
+        # Write all 3 profiles so M-key switching has valid flash for each slot.
+        print('[onboard] remapping G1–G5 → F13–F17 in keyboard flash (all 3 profiles)...')
+        for user_addr, rom_data in rom_sectors:
             _patch_gkeys(rom_data)
             _apply_crc(rom_data)
             _write_full_sector(fd, feature_idx, user_addr, rom_data)

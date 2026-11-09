@@ -2,10 +2,12 @@
 from __future__ import annotations
 from .base import LogitechKeyboard, DevicePaths
 from .logitech_g815 import LogitechG815
+from .logitech_g915 import LogitechG915
 
 # Built-in drivers — detection runs in list order, more specific models first.
 ALL_DRIVERS: list[type[LogitechKeyboard]] = [
     LogitechG815,
+    LogitechG915,
 ]
 
 

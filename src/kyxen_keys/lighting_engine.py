@@ -112,20 +112,33 @@ def _drain(fd: int, timeout: float = 0.15) -> None:
         os.read(fd, 64)
 
 
-def _init(fd: int) -> None:
-    _write20(fd, bytes([0x11, 0xff, 0x09, 0x0f]))   # software control
-    _drain(fd)
-    _write20(fd, bytes([0x11, 0xff, 0x03, 0x2e]))   # software lighting mode
-    _drain(fd)
+# G815 lighting init captured from G Hub ("software control", "software
+# lighting mode"). Addressed by fixed feature index, so only valid on the G815.
+G815_INIT_PACKETS: tuple[bytes, ...] = (
+    bytes([0x11, 0xff, 0x09, 0x0f]),
+    bytes([0x11, 0xff, 0x03, 0x2e]),
+)
+
+# Runtime index of PerKeyLightingV2 (0x8081) on the G815.
+G815_PER_KEY_IDX = 0x10
+
+# PerKeyLightingV2 functions (encoded as func << 4 | software id 0xe)
+_FN_SET_RANGE = 0x5e   # setRangeRgbZones: [first, last, r, g, b] × 3
+_FN_FRAME_END = 0x7e   # frameEnd: latch the written colours onto the LEDs
 
 
-_COMMIT = bytes([0x11, 0xff, 0x10, 0x7e]) + bytes(16)   # 20-byte LONG report
+def _init(fd: int, packets: tuple[bytes, ...] | list[bytes]) -> None:
+    for pkt in packets:
+        _write20(fd, pkt)
+        _drain(fd)
+
 
 def _write_frame(
     fd: int,
     frame: dict[str, tuple[int, int, int]],
     prev: dict[str, tuple[int, int, int]] | None,
     key_ids: dict[str, int] = _G815_KEY_IDS,
+    feature_idx: int = G815_PER_KEY_IDX,
 ) -> None:
     """Write changed keys batched 3 per packet ([key_id, key_id, r, g, b] × 3), then commit."""
     changed: list[tuple[int, int, int, int]] = []
@@ -139,7 +152,7 @@ def _write_frame(
     if not changed:
         return
     p = bytearray(20)
-    p[0], p[1], p[2], p[3] = 0x11, 0xff, 0x10, 0x5e
+    p[0], p[1], p[2], p[3] = 0x11, 0xff, feature_idx, _FN_SET_RANGE
     for i in range(0, len(changed), 3):
         p[4:20] = b'\x00' * 16
         for slot, (kid, r, g, b) in enumerate(changed[i:i + 3]):
@@ -147,7 +160,7 @@ def _write_frame(
             p[off] = p[off + 1] = kid
             p[off + 2], p[off + 3], p[off + 4] = r, g, b
         os.write(fd, bytes(p))
-    os.write(fd, _COMMIT)
+    os.write(fd, bytes([0x11, 0xff, feature_idx, _FN_FRAME_END]) + bytes(16))
 
 
 # ── Frame builders ────────────────────────────────────────────────────────────
@@ -347,7 +360,9 @@ class LightingEngine:
     Run in a daemon thread via threading.Thread(target=engine.run, daemon=True).
     Push config changes with set_config(); the thread picks them up on next tick.
 
-    key_ids: LED address map for this keyboard model. Defaults to G815 if None.
+    key_ids:      LED address map for this keyboard model. Defaults to G815 if None.
+    feature_idx:  runtime index of PerKeyLightingV2 (0x8081). Defaults to the G815's.
+    init_packets: packets sent after opening the device. None = G815 init.
     """
 
     def __init__(
@@ -355,10 +370,14 @@ class LightingEngine:
         hidraw_path: str,
         stop_flag: Callable[[], bool],
         key_ids: dict[str, int] | None = None,
+        feature_idx: int = G815_PER_KEY_IDX,
+        init_packets: list[bytes] | None = None,
     ) -> None:
-        self._hidraw_path = hidraw_path
-        self._stop_flag   = stop_flag
-        self._key_ids     = key_ids if key_ids is not None else _G815_KEY_IDS
+        self._hidraw_path  = hidraw_path
+        self._stop_flag    = stop_flag
+        self._key_ids      = key_ids if key_ids is not None else _G815_KEY_IDS
+        self._feature_idx  = feature_idx
+        self._init_packets = list(G815_INIT_PACKETS) if init_packets is None else init_packets
         self._queue: queue.SimpleQueue[LightingConfig] = queue.SimpleQueue()
 
     def set_config(self, config: LightingConfig) -> None:
@@ -382,7 +401,7 @@ class LightingEngine:
             prev_frame: dict[str, tuple[int, int, int]] | None = None
 
             try:
-                _init(fd)
+                _init(fd, self._init_packets)
 
                 while not self._stop_flag():
                     tick_start = time.monotonic()
@@ -410,7 +429,7 @@ class LightingEngine:
                     if config.mode == 'static':
                         if needs_write:
                             frame = _build_static(config, ki)
-                            _write_frame(fd, frame, prev_frame, ki)
+                            _write_frame(fd, frame, prev_frame, ki, self._feature_idx)
                             prev_frame  = frame
                             needs_write = False
                         time.sleep(_TICK)
@@ -427,14 +446,14 @@ class LightingEngine:
                             frame = _build_colour_cycle(config, t, ki)
                         else:
                             frame = _build_static(config, ki)
-                        _write_frame(fd, frame, prev_frame, ki)
+                        _write_frame(fd, frame, prev_frame, ki, self._feature_idx)
                         prev_frame = frame
                         elapsed = time.monotonic() - tick_start
                         time.sleep(max(0.0, _TICK - elapsed))
 
                     elif config.mode == 'animation' and config.animation is not None:
                         frame = _build_animation(config, t, ki)
-                        _write_frame(fd, frame, prev_frame, ki)
+                        _write_frame(fd, frame, prev_frame, ki, self._feature_idx)
                         prev_frame = frame
                         elapsed = time.monotonic() - tick_start
                         time.sleep(max(0.0, _TICK - elapsed))
@@ -443,7 +462,7 @@ class LightingEngine:
                         # Unknown mode — treat as static
                         if needs_write:
                             frame = _build_static(config, ki)
-                            _write_frame(fd, frame, prev_frame, ki)
+                            _write_frame(fd, frame, prev_frame, ki, self._feature_idx)
                             prev_frame  = frame
                             needs_write = False
                         time.sleep(_TICK)

@@ -57,6 +57,72 @@ def find_evdev(
     return None
 
 
+_HIDPP_VENDOR_PAGE = 0xFF00   # Logitech vendor usage page carrying HID++
+_HIDPP_LONG_ID     = 0x11     # HID++ long report (20 bytes)
+
+
+def is_hidpp_descriptor(desc: bytes) -> bool:
+    """
+    Return True if a HID report descriptor declares the HID++ long report
+    (report ID 0x11) on the Logitech vendor usage page 0xFF00.
+
+    Walks the short items of the descriptor: Usage Page (global tag 0x04) and
+    Report ID (global tag 0x84). Long items (prefix 0xFE) are skipped.
+    """
+    usage_page = 0
+    i = 0
+    while i < len(desc):
+        prefix = desc[i]
+        if prefix == 0xFE:                      # long item: FE <size> <tag> <data>
+            if i + 1 >= len(desc):
+                break
+            i += 3 + desc[i + 1]
+            continue
+        size = (0, 1, 2, 4)[prefix & 0x03]
+        data = desc[i + 1:i + 1 + size]
+        value = int.from_bytes(data, 'little') if data else 0
+        tag = prefix & 0xFC
+        if tag == 0x04:
+            usage_page = value
+        elif tag == 0x84 and value == _HIDPP_LONG_ID and usage_page == _HIDPP_VENDOR_PAGE:
+            return True
+        i += 1 + size
+    return False
+
+
+def find_hidpp_hidraw(vendor_id: int, product_ids: list[int]) -> str | None:
+    """
+    Return the hidraw node that carries HID++ for the given keyboard, chosen
+    by report descriptor rather than by interface order. The G815 exposes
+    HID++ on USB interface 1, the G915 (wired) on interface 2.
+    """
+    for i in range(64):
+        hidraw_path = f'/dev/hidraw{i}'
+        sys_dir = Path(f'/sys/class/hidraw/hidraw{i}/device')
+        if not os.path.exists(hidraw_path) or not _ids_match(sys_dir, vendor_id, product_ids):
+            continue
+        try:
+            desc = (sys_dir / 'report_descriptor').read_bytes()
+        except OSError:
+            continue
+        if is_hidpp_descriptor(desc):
+            return hidraw_path
+    return None
+
+
+def _ids_match(sys_dir: Path, vendor_id: int, product_ids: list[int]) -> bool:
+    try:
+        for line in (sys_dir / 'uevent').read_text().splitlines():
+            if line.startswith('HID_ID='):
+                parts = line.split('=', 1)[1].split(':')
+                return (len(parts) == 3
+                        and int(parts[1], 16) == vendor_id
+                        and int(parts[2], 16) in product_ids)
+    except (OSError, ValueError):
+        pass
+    return False
+
+
 def find_hidraw(vendor_id: int, product_ids: list[int], exclude: str = '') -> str | None:
     """
     Scan /dev/hidraw* and return the path whose sysfs uevent matches

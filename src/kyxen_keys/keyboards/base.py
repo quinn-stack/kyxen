@@ -34,6 +34,27 @@ class LogitechKeyboard(ABC):
 
     def __init__(self, paths: DevicePaths) -> None:
         self.paths = paths
+        self._feature_indices: dict[int, int] = {}
+
+    # ── HID++ helpers ─────────────────────────────────────────────────────────
+
+    def feature_index(self, feature_id: int) -> int:
+        """
+        Return the runtime HID++ index of a feature ID (e.g. 0x8081) on this
+        keyboard, looked up once via the ROOT feature and cached.
+        Raises if there is no HID++ interface or the feature is unsupported.
+        """
+        if feature_id not in self._feature_indices:
+            if not self.paths.hidraw:
+                raise RuntimeError('no HID++ hidraw path available')
+            from .. import onboard_profiles
+            self._feature_indices[feature_id] = onboard_profiles.get_feature_index(
+                self.paths.hidraw, feature_id)
+        return self._feature_indices[feature_id]
+
+    def lighting_init_packets(self) -> list[bytes]:
+        """Extra HID++ packets the LightingEngine sends after opening the device."""
+        return []
 
     # ── required overrides ────────────────────────────────────────────────────
 

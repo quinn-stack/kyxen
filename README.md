@@ -12,6 +12,7 @@ account, no proprietary drivers required.
 | Model | G-keys | M-key profile switching | Lighting |
 |-------|--------|------------------------|---------|
 | Logitech G815 | G1–G5 | ✅ M1–M3 | ✅ Per-key RGB editor — static, presets (breathing/wave/rainbow wave/colour cycle), custom slide animations |
+| Logitech G915 (USB cable) | G1–G5 | ✅ M1–M3 | ✅ Same as G815 — not yet via the LIGHTSPEED receiver |
 | Logitech G15 | G1–G18 | ➖ | ➖ amber backlight only |
 
 > **G15 community support:** A working G15 driver exists in the community (requires
@@ -120,10 +121,20 @@ held down.
 ## Permissions
 
 Kyxen needs read/write access to `/dev/input/event*` (G-key interface) and
-`/dev/uinput` (for injecting keystrokes and mouse events).
+`/dev/uinput` (for injecting keystrokes and mouse events). Depending on the
+distribution these are covered by `logind` ACLs or need the groups below.
 
-On most desktop Linux systems the active session user already has these via
-`logind` ACLs. If not:
+It also needs read/write access to the keyboard's `/dev/hidraw*` nodes (G-key
+reports, HID++ lighting and profile control). These are usually root-only, so
+add a udev rule that grants them to the logged-in user:
+
+```bash
+echo 'KERNEL=="hidraw*", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="c33f|c33e", TAG+="uaccess"' \
+  | sudo tee /etc/udev/rules.d/70-kyxen.rules
+sudo udevadm control --reload-rules && sudo udevadm trigger
+```
+
+For the input devices:
 
 ```bash
 # input group covers /dev/input/*

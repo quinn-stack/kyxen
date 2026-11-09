@@ -106,26 +106,36 @@ def _send(fd: int, data: bytes, timeout: float = 0.3) -> bytes | None:
 
 # ── Lighting primitives ───────────────────────────────────────────────────────
 
-def _init_sw_mode(fd: int) -> None:
-    _send(fd, bytes([0x11, 0xff, 0x09, 0x0f] + [0x00] * 16))  # software control
-    _send(fd, bytes([0x11, 0xff, 0x03, 0x2e] + [0x00] * 16))  # software lighting mode
+_G815_PER_KEY_IDX = 0x10   # PerKeyLightingV2 (0x8081) index on the G815
+_G815_INIT = (
+    bytes([0x11, 0xff, 0x09, 0x0f]),   # software control (G815 only)
+    bytes([0x11, 0xff, 0x03, 0x2e]),   # software lighting mode (G815 only)
+)
 
 
-def _set_key(fd: int, key_id: int, r: int, g: int, b: int) -> None:
+def _init_sw_mode(fd: int, packets=_G815_INIT) -> None:
+    for pkt in packets:
+        _send(fd, pkt)
+
+
+def _set_key(fd: int, key_id: int, r: int, g: int, b: int,
+             perkey_idx: int = _G815_PER_KEY_IDX) -> None:
     p = bytearray(20)
-    p[0], p[1], p[2], p[3] = 0x11, 0xff, 0x10, 0x5e
+    p[0], p[1], p[2], p[3] = 0x11, 0xff, perkey_idx, 0x5e
     p[4] = p[5] = key_id
     p[6], p[7], p[8] = r, g, b
     _write(fd, bytes(p))
 
 
-def _commit(fd: int) -> None:
-    _send(fd, bytes([0x11, 0xff, 0x10, 0x7e] + [0x00] * 16))
+def _commit(fd: int, perkey_idx: int = _G815_PER_KEY_IDX) -> None:
+    _send(fd, bytes([0x11, 0xff, perkey_idx, 0x7e] + [0x00] * 16))
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
-def apply_profile(hidraw_path: str, mode: str, colour: str) -> None:
+def apply_profile(hidraw_path: str, mode: str, colour: str,
+                  perkey_idx: int = _G815_PER_KEY_IDX,
+                  init_packets=_G815_INIT) -> None:
     """Set all keys to a single colour. mode='off' forces black."""
     try:
         fd = os.open(hidraw_path, os.O_RDWR)
@@ -136,10 +146,10 @@ def apply_profile(hidraw_path: str, mode: str, colour: str) -> None:
         r, g, b = _hex_to_rgb(colour)
         if mode == 'off':
             r = g = b = 0
-        _init_sw_mode(fd)
+        _init_sw_mode(fd, init_packets)
         for key_id in _ALL_LEDS:
-            _set_key(fd, key_id, r, g, b)
-        _commit(fd)
+            _set_key(fd, key_id, r, g, b, perkey_idx)
+        _commit(fd, perkey_idx)
     finally:
         os.close(fd)
 
