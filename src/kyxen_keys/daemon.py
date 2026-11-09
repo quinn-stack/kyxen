@@ -322,6 +322,7 @@ class KyxenDaemon:
 
     def reload_config(self) -> None:
         self._load_profiles()
+        macro_runner.reset_layout()   # pick up keyboard_layout changes in config.toml
         if self._lighting_engine is not None and self._active_profile in self._profiles:
             self._lighting_engine.set_config(
                 self._profiles[self._active_profile].lighting

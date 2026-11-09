@@ -117,6 +117,25 @@ All types except Hold toggle support **Repeat while held** — the action fires
 repeatedly at a configurable interval (10–5000 ms) for as long as the G-key is
 held down.
 
+### Keyboard layout for text macros
+
+Type text and Key combo macros inject physical keys, so Kyxen has to know your
+keyboard layout. It reads `X11 Layout` / `X11 Variant` from `localectl status`.
+Supported layouts: `us`, `gb`, `de`, `at` (including the `nodeadkeys` variants).
+Other layouts fall back to `us`.
+
+On QWERTZ layouts AltGr characters (`@ € \ | { } [ ] ~`), umlauts and dead keys
+(`^ ´ \``) are typed correctly. In Key combo macros single letters follow the
+layout, so `ctrl` + `z` is Undo on QWERTZ too.
+
+If `localectl` reports the wrong layout (e.g. your desktop sets its own layout
+on Wayland), override it in `~/.config/kyxen/config.toml`:
+
+```toml
+keyboard_layout  = "at"
+keyboard_variant = "nodeadkeys"   # optional
+```
+
 ## Permissions
 
 Kyxen needs read/write access to `/dev/input/event*` (G-key interface) and
