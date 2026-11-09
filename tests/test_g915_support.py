@@ -73,13 +73,13 @@ def test_feature_index_without_hidraw_raises() -> None:
         kb.feature_index(0x8081)
 
 
-def test_remap_uses_resolved_onboard_profiles_index(monkeypatch) -> None:
+def test_g815_remap_uses_resolved_onboard_profiles_index(monkeypatch) -> None:
     seen = {}
-    monkeypatch.setattr(onboard_profiles, 'get_feature_index', lambda p, f: 0x15)
+    monkeypatch.setattr(onboard_profiles, 'get_feature_index', lambda p, f: 0x11)
     monkeypatch.setattr(onboard_profiles, 'ensure_gkey_remap',
                         lambda path, idx: seen.setdefault('idx', idx) and False)
-    LogitechG915(DevicePaths(evdev='/dev/null', hidraw='/dev/hidraw5')).ensure_gkey_remap()
-    assert seen['idx'] == 0x15
+    LogitechG815(DevicePaths(evdev='/dev/null', hidraw='/dev/hidraw9')).ensure_gkey_remap()
+    assert seen['idx'] == 0x11
 
 
 # ── lighting frames ──────────────────────────────────────────────────────────
@@ -245,3 +245,55 @@ def test_hidpp20_error_is_raised_not_returned_as_data() -> None:
     with pytest.raises(RuntimeError, match='HID\\+\\+ error'):
         onboard_profiles._send(dev.host.fileno(), onboard_profiles._long(0x14, 5, struct.pack('>HH', 1, 0xF0)))
     t.join()
+
+
+# ── G-keys via HID++ notifications ───────────────────────────────────────────
+
+def test_gkey_changes_from_bitmasks() -> None:
+    from kyxen_keys.gkeys import gkey_changes
+    assert gkey_changes(0x00, 0x01) == (['g1'], [])
+    assert gkey_changes(0x01, 0x00) == ([], ['g1'])
+    assert gkey_changes(0x01, 0x11) == (['g5'], [])          # G5 added while G1 held
+    assert gkey_changes(0x11, 0x10) == ([], ['g1'])
+
+
+def test_g915_reads_gkeys_via_hidpp_without_flash_remap() -> None:
+    kb = LogitechG915(DevicePaths(evdev='/dev/null', hidraw='/dev/hidraw5'))
+    assert LogitechG915.GKEYS_VIA_HIDPP and not LogitechG815.GKEYS_VIA_HIDPP
+    assert LogitechG915.GKEY_SUPPRESS_CODES == frozenset()
+    assert kb.ensure_gkey_remap() is False
+
+
+def test_mkey_listener_reports_gkey_notifications(monkeypatch) -> None:
+    """Feed the listener the exact packets captured from a G915 (feature 0x10)."""
+    from kyxen_keys import gkeys
+    captured = [bytes.fromhex(h) for h in (
+        '11ff100001000000000000000000000000000000',   # G1 down
+        '11ff100000000000000000000000000000000000',   # up
+        '11ff100010000000000000000000000000000000',   # G5 down
+        '11ff100000000000000000000000000000000000',   # up
+        '11ff110002000000000000000000000000000000',   # M2 (feature 0x11)
+    )]
+    import threading
+    import time
+    host, dev = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+    host.setblocking(False)
+    monkeypatch.setattr(gkeys.os, 'open', lambda *a, **k: host.fileno())
+    monkeypatch.setattr(gkeys.os, 'close', lambda fd: None)
+
+    def keyboard() -> None:
+        time.sleep(1.2)                 # after the listener's startup drain (~1 s)
+        for pkt in captured:
+            dev.send(pkt)
+
+    threading.Thread(target=keyboard, daemon=True).start()
+    events, mkeys = [], []
+    deadline = time.monotonic() + 2.0
+    gkeys.run_mkey_listener(
+        hidraw_path='/dev/hidraw5', feat_8010_idx=0x10, feat_8020_idx=0x11, feat_profiles_idx=0x14,
+        on_mkey=mkeys.append, stop_flag=lambda: time.monotonic() > deadline,
+        on_gkey_press=lambda g: events.append(('down', g)),
+        on_gkey_release=lambda g: events.append(('up', g)),
+    )
+    assert events == [('down', 'g1'), ('up', 'g1'), ('down', 'g5'), ('up', 'g5')]
+    assert mkeys == [1]

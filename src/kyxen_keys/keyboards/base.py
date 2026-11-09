@@ -28,6 +28,11 @@ class LogitechKeyboard(ABC):
     # HID++ 2.0 feature index for GKEYS on this model (None = no HID++ G-key support).
     GKEYS_FEATURE_IDX: ClassVar[int | None] = None
 
+    # True if G-keys arrive as HID++ GKEY (0x8010) notifications once software
+    # mode is enabled (G915). False = read them from the boot-protocol hidraw
+    # after the flash remap (G815).
+    GKEYS_VIA_HIDPP: ClassVar[bool] = False
+
     # Evdev codes emitted by the G-key interface that must be suppressed.
     # The daemon grabs the interface and drops these so they never reach apps.
     GKEY_SUPPRESS_CODES: ClassVar[frozenset[int]] = frozenset()

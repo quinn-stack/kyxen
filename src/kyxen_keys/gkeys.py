@@ -30,6 +30,14 @@ Notification format:
 Feature indices are runtime values looked up via get_feature_index() in
 onboard_profiles.py. On the G815 they are 0x0a (0x8010) and 0x0b (0x8020)
 but must not be hardcoded.
+
+G-keys via HID++ (G915)
+------------------------
+Enabling software mode on 0x8010 also diverts the G915's G-keys: they stop
+producing key codes and arrive on the same fd as GKEY notifications instead:
+  11 ff [feat_8010_idx] 00 [bitmask lo] [bitmask hi] 00 ... (20 bytes)
+  bit 0 = G1 ... bit 4 = G5, release = 0x00
+run_mkey_listener reports them when on_gkey_press is given.
 """
 from __future__ import annotations
 import os
@@ -48,6 +56,13 @@ _HID_TO_GKEY = {
     0x6b: 'g4',
     0x6c: 'g5',
 }
+
+
+def gkey_changes(prev_mask: int, mask: int) -> tuple[list[str], list[str]]:
+    """Return (pressed, released) G-key names between two GKEY bitmasks."""
+    pressed  = [f'g{i + 1}' for i in range(16) if mask & (1 << i) and not prev_mask & (1 << i)]
+    released = [f'g{i + 1}' for i in range(16) if prev_mask & (1 << i) and not mask & (1 << i)]
+    return pressed, released
 
 
 def run_gkey_listener(
@@ -99,6 +114,8 @@ def run_mkey_listener(
     on_mkey: Callable[[int], None],
     stop_flag: Callable[[], bool],
     led_queue: '_queue_mod.SimpleQueue[int] | None' = None,
+    on_gkey_press: Callable[[str], None] | None = None,
+    on_gkey_release: Callable[[str], None] | None = None,
 ) -> None:
     """
     Listen for M-key profile switch notifications on the HID++ interface.
@@ -146,7 +163,10 @@ def run_mkey_listener(
         os.write(fd, bytes([0x11, 0xff, feat_8020_idx, 0x1e, 0x01]) + b'\x00' * 15)
         _drain(0.3)
 
+        gkey_mask = 0
+
         def _drain_and_check() -> None:
+            nonlocal gkey_mask
             while True:
                 try:
                     data = os.read(fd, 64)
@@ -154,6 +174,20 @@ def run_mkey_listener(
                     return
                 except OSError:
                     raise
+                if (on_gkey_press is not None
+                        and len(data) >= 6
+                        and data[0] == 0x11
+                        and data[2] == feat_8010_idx
+                        and data[3] == 0x00):
+                    mask = data[4] | (data[5] << 8)
+                    pressed, released = gkey_changes(gkey_mask, mask)
+                    gkey_mask = mask
+                    for name in pressed:
+                        on_gkey_press(name)
+                    if on_gkey_release:
+                        for name in released:
+                            on_gkey_release(name)
+                    continue
                 if (len(data) >= 5
                         and data[0] == 0x11
                         and data[2] == feat_8020_idx

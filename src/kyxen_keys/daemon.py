@@ -90,7 +90,9 @@ class KyxenDaemon:
         threading.Thread(target=self._config_watch, daemon=True).start()
 
         gkeys_hidraw = self._keyboard.paths.hidraw_gkeys
-        if gkeys_hidraw:
+        if self._keyboard.GKEYS_VIA_HIDPP:
+            print('[kyxen] G-key detection: HID++ GKEY notifications')
+        elif gkeys_hidraw:
             threading.Thread(target=self._gkey_hid_loop, daemon=True).start()
             print(f'[kyxen] G-key detection: boot-protocol on {gkeys_hidraw}')
         else:
@@ -234,6 +236,8 @@ class KyxenDaemon:
             on_mkey=self._handle_mkey,
             stop_flag=lambda: not self._running,
             led_queue=self._mkey_led_queue,
+            on_gkey_press=self._handle_gkey if self._keyboard.GKEYS_VIA_HIDPP else None,
+            on_gkey_release=self._handle_gkey_release if self._keyboard.GKEYS_VIA_HIDPP else None,
         )
 
     def _handle_mkey(self, mkey_idx: int) -> None:
