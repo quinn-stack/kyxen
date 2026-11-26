@@ -32,6 +32,12 @@ class LogitechKeyboard(ABC):
     # The daemon grabs the interface and drops these so they never reach apps.
     GKEY_SUPPRESS_CODES: ClassVar[frozenset[int]] = frozenset()
 
+    # Evdev code → G-key name map for keyboards whose G-keys emit evdev events
+    # directly (e.g. KEY_MACRO1–KEY_MACRO18 on the G15).  When non-empty, the
+    # daemon dispatches matching EV_KEY events as G-key presses/releases instead
+    # of passing them through uinput.  No hidraw boot-protocol reading is needed.
+    EVDEV_GKEY_MAP: ClassVar[dict[int, str]] = {}
+
     def __init__(self, paths: DevicePaths) -> None:
         self.paths = paths
 

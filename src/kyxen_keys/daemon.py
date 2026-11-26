@@ -192,13 +192,22 @@ class KyxenDaemon:
 
     def _event_loop(self) -> None:
         suppress = self._keyboard.GKEY_SUPPRESS_CODES
+        evdev_gkeys = self._keyboard.EVDEV_GKEY_MAP
         try:
             for event in self._device.read_loop():
                 if not self._running:
                     break
-                if event.type == ecodes.EV_KEY and event.code in suppress:
-                    # Drop silently — G-key identity comes from HID boot-protocol thread
-                    continue
+                if event.type == ecodes.EV_KEY:
+                    if event.code in evdev_gkeys:
+                        gkey = evdev_gkeys[event.code]
+                        if event.value == 1:
+                            self._handle_gkey(gkey)
+                        elif event.value == 0:
+                            self._handle_gkey_release(gkey)
+                        continue
+                    if event.code in suppress:
+                        # Drop silently — G-key identity comes from HID boot-protocol thread
+                        continue
                 # Forward as-is; original EV_SYN events drive sync — no extra syn() call
                 self._uinput.write_event(event)
         except Exception as e:
